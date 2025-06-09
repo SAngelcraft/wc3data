@@ -1,0 +1,120 @@
+# .github/workflows/build-wasm.yml
+# Test compilation of wc3dat.wasm...
+
+name: Build WC3Data WASM
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:  # Permite ejecutar manualmente
+
+jobs:
+  build-wasm:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: 📥 Checkout código
+      uses: actions/checkout@v4
+      
+    - name: 🔧 Setup Emscripten
+      uses: mymindstorm/setup-emsdk@v14
+      with:
+        version: 3.1.45
+        
+    - name: ✅ Verificar Emscripten
+      run: |
+        emcc --version
+        echo "Emscripten configurado correctamente"
+        
+    - name: 📁 Crear directorios
+      run: |
+        mkdir -p build
+        mkdir -p src/maps
+        
+    - name: 🔨 Compilar DataGen a WebAssembly
+      run: |
+        echo "Compilando wc3dat.wasm..."
+        emcc DataGen/main.cpp \
+          DataGen/common.cpp \
+          DataGen/archive.cpp \
+          DataGen/blp.cpp \
+          DataGen/dds.cpp \
+          DataGen/png.cpp \
+          DataGen/mpq.cpp \
+          DataGen/version.cpp \
+          -O3 \
+          -s WASM=1 \
+          -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","getValue","setValue"]' \
+          -s EXPORTED_FUNCTIONS='["_malloc","_free","_main"]' \
+          -s ALLOW_MEMORY_GROWTH=1 \
+          -s MODULARIZE=1 \
+          -s EXPORT_NAME="WC3Data" \
+          -s ENVIRONMENT=web \
+          -s FILESYSTEM=1 \
+          -s FORCE_FILESYSTEM=1 \
+          -s INVOKE_RUN=0 \
+          --no-entry \
+          -flto \
+          -I./DataGen \
+          -I./DataGen/include \
+          -std=c++17 \
+          --bind \
+          -o build/wc3dat.js
+          
+    - name: 📋 Verificar archivos generados
+      run: |
+        echo "Archivos generados:"
+        ls -la build/
+        if [ -f "build/wc3dat.wasm" ]; then
+          echo "✅ wc3dat.wasm generado correctamente"
+          echo "📊 Tamaño: $(du -h build/wc3dat.wasm | cut -f1)"
+        else
+          echo "❌ Error: wc3dat.wasm no fue generado"
+          exit 1
+        fi
+        
+    - name: 📦 Copiar archivos a src/maps
+      run: |
+        cp build/wc3dat.js src/maps/wc3dat.jscc
+        cp build/wc3dat.wasm src/maps/wc3dat.wasm
+        echo "Archivos copiados a src/maps/"
+        
+    - name: 📤 Subir artefactos
+      uses: actions/upload-artifact@v4
+      with:
+        name: wc3dat-wasm-files
+        path: |
+          build/wc3dat.js
+          build/wc3dat.wasm
+          src/maps/wc3dat.jscc
+          src/maps/wc3dat.wasm
+        retention-days: 30
+        
+    - name: 🏷️ Crear release automático
+      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: wasm-build-${{ github.run_number }}
+        name: "WC3Data WASM Build #${{ github.run_number }}"
+        body: |
+          🎮 Compilación automática de wc3dat.wasm
+          
+          **Archivos incluidos:**
+          - `wc3dat.js` - Loader JavaScript
+          - `wc3dat.wasm` - Módulo WebAssembly
+          - `wc3dat.jscc` - Loader para proyecto wc3data
+          
+          **Uso:**
+          ```javascript
+          import WC3Data from './wc3dat.js';
+          const module = await WC3Data();
+          ```
+          
+          Generado automáticamente el {{ steps.date.outputs.date }}
+        files: |
+          build/wc3dat.js
+          build/wc3dat.wasm
+        draft: false
+        prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
