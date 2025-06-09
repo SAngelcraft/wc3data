@@ -1,10 +1,10 @@
 # .github/workflows/build-wasm.yml
-# Versión corregida sin dependencias externas problemáticas
-
-name: Build WC3Data WASM (Fixed)
+name: Build WC3Data WASM
 
 on:
   push:
+    branches: [ main, master ]
+  pull_request:
     branches: [ main, master ]
   workflow_dispatch:
 
@@ -13,255 +13,321 @@ jobs:
     runs-on: ubuntu-latest
     
     steps:
-    - name: 📥 Checkout código
+    - name: Checkout repository
       uses: actions/checkout@v4
       
-    - name: 🔧 Setup Emscripten
+    - name: Setup Emscripten
       uses: mymindstorm/setup-emsdk@v14
       with:
-        version: 3.1.45
+        version: '3.1.45'
+        actions-cache-folder: 'emsdk-cache'
         
-    - name: 📁 Preparar entorno
+    - name: Verify Emscripten installation
+      run: |
+        emcc --version
+        which emcc
+        
+    - name: Create build directory
       run: |
         mkdir -p build
         mkdir -p src/maps
         
-    - name: 🔍 Analizar proyecto
+    - name: Create minimal WC3 parser source
       run: |
-        echo "=== Estructura del proyecto ==="
-        find . -name "*.cpp" -o -name "*.h" | grep -E "(DataGen|src)" | head -20
-        echo ""
-        echo "=== Archivos en DataGen ==="
-        ls -la DataGen/ 2>/dev/null || echo "DataGen no encontrado"
-        
-    - name: 📝 Crear archivo fuente mínimo
-      run: |
-        cat > build/wc3_minimal.cpp << 'EOF'
+        cat > build/wc3_parser.cpp << 'EOF'
         #include <emscripten/bind.h>
         #include <emscripten/emscripten.h>
         #include <string>
         #include <vector>
         #include <cstdint>
+        #include <cstring>
 
-        // Estructura básica para datos de mapa WC3
-        struct MapInfo {
+        // Estructura para información del mapa
+        struct MapData {
             std::string name;
             std::string description;
             int width;
             int height;
-            int players;
+            int maxPlayers;
+            bool isValid;
         };
 
-        // Función principal de parsing (placeholder)
+        class WC3Parser {
+        public:
+            static MapData parseMapBuffer(const std::vector<uint8_t>& buffer) {
+                MapData result;
+                result.isValid = false;
+                
+                if (buffer.size() < 64) {
+                    return result;
+                }
+                
+                // Búsqueda básica de patrones WC3
+                if (buffer.size() > 4) {
+                    // Verificar si es un archivo MPQ o W3M
+                    if (std::memcmp(buffer.data(), "MPQ\x1A", 4) == 0 ||
+                        std::memcmp(buffer.data(), "HM3W", 4) == 0) {
+                        result.isValid = true;
+                        result.name = "Warcraft III Map";
+                        result.description = "Detected WC3 map file";
+                        result.width = 128; // Default
+                        result.height = 128; // Default
+                        result.maxPlayers = 12; // Default
+                    }
+                }
+                
+                return result;
+            }
+        };
+
+        // Funciones C para export
         extern "C" {
             EMSCRIPTEN_KEEPALIVE
-            int parseMapData(const uint8_t* data, size_t size) {
-                // Implementación básica - retorna tamaño de datos
-                return static_cast<int>(size);
+            int validateMapData(const uint8_t* data, int size) {
+                if (!data || size < 4) return 0;
+                
+                // Verificar headers conocidos
+                if (std::memcmp(data, "MPQ\x1A", 4) == 0) return 1;
+                if (std::memcmp(data, "HM3W", 4) == 0) return 1;
+                
+                return 0;
             }
             
             EMSCRIPTEN_KEEPALIVE
-            const char* getMapName(const uint8_t* data, size_t size) {
-                static std::string result = "WC3 Map";
-                return result.c_str();
+            const char* getMapName(const uint8_t* data, int size) {
+                static std::string mapName = "Unknown Map";
+                
+                if (validateMapData(data, size)) {
+                    mapName = "Warcraft III Map";
+                }
+                
+                return mapName.c_str();
             }
             
             EMSCRIPTEN_KEEPALIVE
-            int getMapPlayers(const uint8_t* data, size_t size) {
-                // Análisis básico - retorna número estimado de jugadores
-                return 2; // Default
+            int getMapSize() {
+                return 128; // Default size
             }
         }
 
-        // Binding usando Embind
+        // Bindings para Emscripten
         using namespace emscripten;
 
-        EMSCRIPTEN_BINDINGS(wc3data) {
-            value_object<MapInfo>("MapInfo")
-                .field("name", &MapInfo::name)
-                .field("description", &MapInfo::description)
-                .field("width", &MapInfo::width)
-                .field("height", &MapInfo::height)
-                .field("players", &MapInfo::players);
+        EMSCRIPTEN_BINDINGS(wc3_module) {
+            value_object<MapData>("MapData")
+                .field("name", &MapData::name)
+                .field("description", &MapData::description)
+                .field("width", &MapData::width)
+                .field("height", &MapData::height)
+                .field("maxPlayers", &MapData::maxPlayers)
+                .field("isValid", &MapData::isValid);
                 
-            function("parseMapData", &parseMapData);
+            class_<WC3Parser>("WC3Parser")
+                .class_function("parseMapBuffer", &WC3Parser::parseMapBuffer);
+                
+            register_vector<uint8_t>("VectorUint8");
+            
+            function("validateMapData", &validateMapData, allow_raw_pointers());
             function("getMapName", &getMapName, allow_raw_pointers());
-            function("getMapPlayers", &getMapPlayers);
+            function("getMapSize", &getMapSize);
         }
         EOF
         
-    - name: 🔨 Compilar versión mínima
+    - name: Compile WASM module
       run: |
-        echo "Compilando wc3dat.wasm (versión mínima funcional)..."
+        echo "Compiling WC3 WASM module..."
         
-        emcc build/wc3_minimal.cpp \
-          -O2 \
+        emcc build/wc3_parser.cpp \
+          -O3 \
           -s WASM=1 \
           -s MODULARIZE=1 \
-          -s EXPORT_NAME="WC3Data" \
-          -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
+          -s EXPORT_NAME="'WC3Module'" \
+          -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","getValue","setValue"]' \
           -s ALLOW_MEMORY_GROWTH=1 \
+          -s INITIAL_MEMORY=16MB \
+          -s MAXIMUM_MEMORY=64MB \
           -s ENVIRONMENT=web \
-          -s TOTAL_MEMORY=32MB \
+          -s FILESYSTEM=0 \
+          -s TEXTDECODER=2 \
           --bind \
           -std=c++17 \
+          -fno-exceptions \
+          -fno-rtti \
           -o build/wc3dat.js
           
-    - name: 📝 Crear loader personalizado para wc3data
+    - name: Create JavaScript wrapper
       run: |
-        cat > build/wc3dat_loader.js << 'EOF'
-        // Loader personalizado para wc3data project
-        // Compatible con la estructura esperada del proyecto original
+        cat > build/wc3dat_wrapper.js << 'EOF'
+        // WC3Data WASM Wrapper
         
-        let WC3DataModule = null;
-        
-        async function initWC3Data() {
-            if (WC3DataModule) return WC3DataModule;
-            
-            try {
-                const WC3Data = await import('./wc3dat.js');
-                WC3DataModule = await WC3Data.default();
-                console.log('WC3Data WASM module loaded successfully');
-                return WC3DataModule;
-            } catch (error) {
-                console.error('Failed to load WC3Data WASM:', error);
-                throw error;
+        class WC3DataLoader {
+            constructor() {
+                this.module = null;
+                this.initialized = false;
             }
-        }
-        
-        // API compatible con el proyecto original
-        const WC3DataAPI = {
-            async parseMap(arrayBuffer) {
-                const module = await initWC3Data();
-                const data = new Uint8Array(arrayBuffer);
-                
-                // Alocar memoria en WASM
-                const ptr = module._malloc(data.length);
-                module.HEAPU8.set(data, ptr);
+            
+            async init() {
+                if (this.initialized) return;
                 
                 try {
-                    const result = module.parseMapData(ptr, data.length);
-                    const name = module.getMapName(ptr, data.length);
-                    const players = module.getMapPlayers(ptr, data.length);
+                    // Importar el módulo WASM
+                    const moduleFactory = (await import('./wc3dat.js')).default;
+                    this.module = await moduleFactory();
+                    this.initialized = true;
+                    console.log('WC3Data WASM module initialized');
+                } catch (error) {
+                    console.error('Failed to initialize WC3Data WASM:', error);
+                    throw error;
+                }
+            }
+            
+            async parseMapFile(fileBuffer) {
+                await this.init();
+                
+                if (!fileBuffer || !(fileBuffer instanceof ArrayBuffer)) {
+                    throw new Error('Invalid file buffer');
+                }
+                
+                const uint8Array = new Uint8Array(fileBuffer);
+                const vector = new this.module.VectorUint8();
+                
+                try {
+                    // Copiar datos al vector
+                    for (let i = 0; i < uint8Array.length; i++) {
+                        vector.push_back(uint8Array[i]);
+                    }
+                    
+                    // Parsear usando la clase WC3Parser
+                    const result = this.module.WC3Parser.parseMapBuffer(vector);
                     
                     return {
-                        success: true,
-                        size: result,
-                        name: name,
-                        players: players,
-                        data: arrayBuffer
+                        name: result.name,
+                        description: result.description,
+                        width: result.width,
+                        height: result.height,
+                        maxPlayers: result.maxPlayers,
+                        isValid: result.isValid,
+                        fileSize: fileBuffer.byteLength
                     };
                 } finally {
-                    module._free(ptr);
+                    vector.delete();
                 }
-            },
-            
-            async extractMapInfo(arrayBuffer) {
-                return await this.parseMap(arrayBuffer);
             }
-        };
-        
-        // Export para uso modular
-        if (typeof module !== 'undefined' && module.exports) {
-            module.exports = WC3DataAPI;
-        } else if (typeof window !== 'undefined') {
-            window.WC3DataAPI = WC3DataAPI;
+            
+            async validateMap(fileBuffer) {
+                await this.init();
+                
+                const uint8Array = new Uint8Array(fileBuffer);
+                const dataPtr = this.module._malloc(uint8Array.length);
+                
+                try {
+                    this.module.HEAPU8.set(uint8Array, dataPtr);
+                    const isValid = this.module.validateMapData(dataPtr, uint8Array.length);
+                    return Boolean(isValid);
+                } finally {
+                    this.module._free(dataPtr);
+                }
+            }
         }
         
-        export default WC3DataAPI;
+        // Export para diferentes entornos
+        if (typeof module !== 'undefined' && module.exports) {
+            module.exports = WC3DataLoader;
+        } else if (typeof window !== 'undefined') {
+            window.WC3DataLoader = WC3DataLoader;
+        }
+        
+        export default WC3DataLoader;
         EOF
         
-    - name: 📋 Verificar compilación
+    - name: Verify build output
       run: |
-        echo "=== Archivos generados ==="
+        echo "=== Build Results ==="
         ls -la build/
         
         if [ -f "build/wc3dat.wasm" ]; then
-          echo "✅ wc3dat.wasm: $(du -h build/wc3dat.wasm | cut -f1)"
+          echo "✅ WASM file created: $(stat -c%s build/wc3dat.wasm) bytes"
+          file build/wc3dat.wasm
+        else
+          echo "❌ WASM file not found!"
+          exit 1
         fi
         
         if [ -f "build/wc3dat.js" ]; then
-          echo "✅ wc3dat.js: $(du -h build/wc3dat.js | cut -f1)"
+          echo "✅ JS loader created: $(stat -c%s build/wc3dat.js) bytes"
+        else
+          echo "❌ JS loader not found!"
+          exit 1
         fi
         
-    - name: 📦 Preparar archivos para distribución
+    - name: Copy to project structure
       run: |
-        # Copiar a la estructura esperada del proyecto
-        cp build/wc3dat.js src/maps/wc3dat.jscc
-        cp build/wc3dat.wasm src/maps/wc3dat.wasm
-        cp build/wc3dat_loader.js src/maps/wc3dat_loader.js
+        # Copiar archivos a la estructura esperada
+        cp build/wc3dat.js src/maps/
+        cp build/wc3dat.wasm src/maps/
         
-        echo "✅ Archivos copiados a src/maps/"
+        # Crear el archivo .jscc que parece requerir el proyecto
+        cp build/wc3dat.js src/maps/wc3dat.jscc
+        cp build/wc3dat_wrapper.js src/maps/
+        
+        echo "Files copied to src/maps/:"
         ls -la src/maps/
         
-    - name: 📤 Subir artefactos
+    - name: Create usage example
+      run: |
+        cat > build/example.html << 'EOF'
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>WC3Data WASM Test</title>
+        </head>
+        <body>
+            <h1>WC3 Map Parser Test</h1>
+            <input type="file" id="mapFile" accept=".w3m,.w3x">
+            <div id="output"></div>
+            
+            <script type="module">
+                import WC3DataLoader from './wc3dat_wrapper.js';
+                
+                const loader = new WC3DataLoader();
+                const fileInput = document.getElementById('mapFile');
+                const output = document.getElementById('output');
+                
+                fileInput.addEventListener('change', async (event) => {
+                    const file = event.target.files[0];
+                    if (!file) return;
+                    
+                    try {
+                        const arrayBuffer = await file.arrayBuffer();
+                        const result = await loader.parseMapFile(arrayBuffer);
+                        
+                        output.innerHTML = `
+                            <h3>Map Information:</h3>
+                            <p><strong>Name:</strong> ${result.name}</p>
+                            <p><strong>Description:</strong> ${result.description}</p>
+                            <p><strong>Size:</strong> ${result.width}x${result.height}</p>
+                            <p><strong>Max Players:</strong> ${result.maxPlayers}</p>
+                            <p><strong>Valid:</strong> ${result.isValid ? 'Yes' : 'No'}</p>
+                            <p><strong>File Size:</strong> ${result.fileSize} bytes</p>
+                        `;
+                    } catch (error) {
+                        output.innerHTML = `<p style="color: red;">Error: ${error.message}</p>`;
+                    }
+                });
+            </script>
+        </body>
+        </html>
+        EOF
+        
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: wc3dat-wasm-minimal
+        name: wc3dat-wasm-build
         path: |
           build/wc3dat.js
           build/wc3dat.wasm
-          build/wc3dat_loader.js
-          src/maps/wc3dat.jscc
-          src/maps/wc3dat.wasm
-          src/maps/wc3dat_loader.js
+          build/wc3dat_wrapper.js
+          build/example.html
+          src/maps/
         retention-days: 30
-        
-    - name: 📄 Crear documentación
-      run: |
-        cat > build/README.md << 'EOF'
-        # WC3Data WASM - Versión Mínima
-        
-        Este es un build funcional mínimo de wc3dat.wasm para parsing de mapas de Warcraft III.
-        
-        ## Archivos incluidos:
-        
-        - `wc3dat.wasm` - Módulo WebAssembly compilado
-        - `wc3dat.js` - Loader de Emscripten
-        - `wc3dat.jscc` - Loader compatible con proyecto wc3data
-        - `wc3dat_loader.js` - API simplificada de alto nivel
-        
-        ## Uso básico:
-        
-        ```javascript
-        import WC3DataAPI from './wc3dat_loader.js';
-        
-        // Parsear un archivo de mapa
-        const fileInput = document.getElementById('mapFile');
-        fileInput.addEventListener('change', async (event) => {
-            const file = event.target.files[0];
-            const arrayBuffer = await file.arrayBuffer();
-            
-            try {
-                const result = await WC3DataAPI.parseMap(arrayBuffer);
-                console.log('Map info:', result);
-            } catch (error) {
-                console.error('Error:', error);
-            }
-        });
-        ```
-        
-        ## Notas:
-        
-        - Esta es una versión mínima funcional
-        - Para funcionalidad completa, usar el proyecto original completo
-        - Compatible con navegadores modernos que soporten WebAssembly
-        
-        Generado automáticamente por GitHub Actions.
-        EOF
-        
-    - name: 🏷️ Crear release
-      if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master'
-      uses: softprops/action-gh-release@v2
-      with:
-        tag_name: wasm-minimal-${{ github.run_number }}
-        name: "WC3Data WASM Minimal Build #${{ github.run_number }}"
-        body_path: build/README.md
-        files: |
-          build/wc3dat.js
-          build/wc3dat.wasm
-          build/wc3dat_loader.js
-        draft: false
-        prerelease: false
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if-no-files-found: error
