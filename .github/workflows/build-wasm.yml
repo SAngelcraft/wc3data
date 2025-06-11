@@ -94,46 +94,60 @@ jobs:
                 return nullptr;
             }
             
-            // Método para cargar desde datos JavaScript (NUEVO)
-            bool loadFromJSData(const emscripten::val& jsData) {
-                try {
-                    if (!mapData) {
-                        mapData = std::make_unique<MapData>();
-                    }
-                    mapData->data.clear();
-                    
-                    // Manejar diferentes tipos de datos JavaScript
-                    if (jsData.isString()) {
-                        std::string dataStr = jsData.as<std::string>();
-                        mapData->data.reserve(dataStr.size());
-                        for (char c : dataStr) {
-                            mapData->data.push_back(static_cast<uint8_t>(c));
-                        }
-                    } else if (jsData["constructor"]["name"].as<std::string>() == "Uint8Array" ||
-                               jsData["constructor"]["name"].as<std::string>() == "ArrayBuffer") {
-                        // Manejar Uint8Array o ArrayBuffer
-                        unsigned int length = jsData["length"].as<unsigned int>();
-                        mapData->data.reserve(length);
-                        for (unsigned int i = 0; i < length; i++) {
-                            mapData->data.push_back(jsData[i].as<uint8_t>());
-                        }
-                    } else {
-                        // Fallback: intentar convertir a string
-                        std::string dataStr = jsData.as<std::string>();
-                        mapData->data.reserve(dataStr.size());
-                        for (char c : dataStr) {
-                            mapData->data.push_back(static_cast<uint8_t>(c));
-                        }
-                    }
-                    
-                    mapData->valid = true;
-                    loaded = true;
-                    return true;
-                } catch (...) {
-                    loaded = false;
-                    return false;
-                }
-            }
+            // Método para cargar desde datos JavaScript (CORREGIDO)
+			bool loadFromJSData(const emscripten::val& jsData) {
+				try {
+					if (!mapData) {
+						mapData = std::make_unique<MapData>();
+					}
+					mapData->data.clear();
+					
+					// Manejar diferentes tipos de datos JavaScript
+					if (jsData.isString()) {
+						std::string dataStr = jsData.as<std::string>();
+						mapData->data.reserve(dataStr.size());
+						for (char c : dataStr) {
+							mapData->data.push_back(static_cast<uint8_t>(c));
+						}
+					} else if (jsData.hasOwnProperty("length")) {
+						// Manejar Uint8Array, ArrayBuffer view, etc.
+						unsigned int length = jsData["length"].as<unsigned int>();
+						mapData->data.reserve(length);
+						
+						// Usar typed_memory_view para acceso eficiente
+						emscripten::val memory = emscripten::val::module_property("HEAPU8");
+						
+						for (unsigned int i = 0; i < length; i++) {
+							try {
+								uint8_t byte = jsData[i].as<uint8_t>();
+								mapData->data.push_back(byte);
+							} catch (...) {
+								// Si falla la conversión individual, intentar como entero
+								int value = jsData[i].as<int>();
+								mapData->data.push_back(static_cast<uint8_t>(value & 0xFF));
+							}
+						}
+					} else {
+						// Fallback: intentar convertir a string si es posible
+						try {
+							std::string dataStr = jsData.as<std::string>();
+							mapData->data.reserve(dataStr.size());
+							for (char c : dataStr) {
+								mapData->data.push_back(static_cast<uint8_t>(c));
+							}
+						} catch (...) {
+							return false;
+						}
+					}
+					
+					mapData->valid = true;
+					loaded = true;
+					return true;
+				} catch (...) {
+					loaded = false;
+					return false;
+				}
+			}
             
             bool loadFromData(const std::string& data) {
                 try {
@@ -245,68 +259,91 @@ jobs:
             }
         };
         class ArchiveWrapper {
-        public:
-            // Versión corregida que acepta emscripten::val (CORREGIDO)
-            static MapWrapper* openMap(const emscripten::val& jsData, const std::string& filename) {
-                auto* map = new MapWrapper(filename);
-                if (map->loadFromJSData(jsData)) {
-                    return map;
-                }
-                delete map;
-                return nullptr;
-            }
-            
-            // Versión string original mantenida para compatibilidad
-            static MapWrapper* openMapFromString(const std::string& data, const std::string& filename) {
-                auto* map = new MapWrapper(filename);
-                if (map->loadFromData(data)) {
-                    return map;
-                }
-                delete map;
-                return nullptr;
-            }
-            
-            // Validación mejorada (CORREGIDO)
-            static bool isValidMapData(const emscripten::val& jsData) {
-                try {
-                    std::string data;
-                    if (jsData.isString()) {
-                        data = jsData.as<std::string>();
-                    } else if (jsData["constructor"]["name"].as<std::string>() == "Uint8Array") {
-                        unsigned int length = jsData["length"].as<unsigned int>();
-                        data.reserve(length);
-                        for (unsigned int i = 0; i < length && i < 4; i++) {
-                            data.push_back(static_cast<char>(jsData[i].as<uint8_t>()));
-                        }
-                    } else {
-                        return false;
-                    }
-                    
-                    if (data.size() < 4) return false;
-                    
-                    // Verificar firma PK (ZIP) o MPQ
-                    const std::string pk_signature = "PK";
-                    const std::string mpq_signature = "MPQ";
-                    
-                    return (data.substr(0, 2) == pk_signature) || 
-                           (data.find(mpq_signature) != std::string::npos);
-                } catch (...) {
-                    return false;
-                }
-            }
-            
-            // Método estático para crear un nuevo mapa vacío
-            static MapWrapper* createMap(const std::string& filename = "new_map.w3x") {
-                auto* map = new MapWrapper(filename);
-                // Crear datos mínimos de mapa
-                std::string emptyMapData = "PK\x03\x04"; // Firma ZIP básica
-                if (map->loadFromData(emptyMapData)) {
-                    return map;
-                }
-                delete map;
-                return nullptr;
-            }
-        };
+		public:
+			// Versión corregida que acepta emscripten::val
+			static MapWrapper* openMap(const emscripten::val& jsData, const std::string& filename) {
+				auto* map = new MapWrapper(filename);
+				if (map->loadFromJSData(jsData)) {
+					return map;
+				}
+				delete map;
+				return nullptr;
+			}
+			
+			// Versión string original mantenida para compatibilidad
+			static MapWrapper* openMapFromString(const std::string& data, const std::string& filename) {
+				auto* map = new MapWrapper(filename);
+				if (map->loadFromData(data)) {
+					return map;
+				}
+				delete map;
+				return nullptr;
+			}
+			
+			// Validación mejorada
+			static bool isValidMapData(const emscripten::val& jsData) {
+				try {
+					std::vector<uint8_t> headerBytes;
+					
+					if (jsData.isString()) {
+						std::string dataStr = jsData.as<std::string>();
+						if (dataStr.size() < 4) return false;
+						for (int i = 0; i < 4 && i < dataStr.size(); i++) {
+							headerBytes.push_back(static_cast<uint8_t>(dataStr[i]));
+						}
+					} else if (jsData.hasOwnProperty("length")) {
+						unsigned int length = jsData["length"].as<unsigned int>();
+						if (length < 4) return false;
+						
+						for (int i = 0; i < 4; i++) {
+							try {
+								uint8_t byte = jsData[i].as<uint8_t>();
+								headerBytes.push_back(byte);
+							} catch (...) {
+								int value = jsData[i].as<int>();
+								headerBytes.push_back(static_cast<uint8_t>(value & 0xFF));
+							}
+						}
+					} else {
+						return false;
+					}
+					
+					if (headerBytes.size() < 4) return false;
+					
+					// Verificar firma PK (ZIP)
+					if (headerBytes[0] == 0x50 && headerBytes[1] == 0x4B) {
+						return true;
+					}
+					
+					// Verificar firma MPQ (buscar en los primeros bytes)
+					if (headerBytes.size() >= 4) {
+						std::string header(headerBytes.begin(), headerBytes.end());
+						return header.find("MPQ") != std::string::npos;
+					}
+					
+					return false;
+				} catch (...) {
+					return false;
+				}
+			}
+			
+			// Método estático para crear un nuevo mapa vacío
+			static MapWrapper* createMap(const std::string& filename = "new_map.w3x") {
+				auto* map = new MapWrapper(filename);
+				// Crear datos mínimos de mapa con firma ZIP
+				std::string emptyMapData;
+				emptyMapData.push_back(0x50); // P
+				emptyMapData.push_back(0x4B); // K
+				emptyMapData.push_back(0x03);
+				emptyMapData.push_back(0x04);
+				
+				if (map->loadFromData(emptyMapData)) {
+					return map;
+				}
+				delete map;
+				return nullptr;
+			}
+		};
         // Clase wrapper adicional para API de alto nivel
         class Map {
         public:
@@ -431,6 +468,8 @@ jobs:
         fi
         cat > build/patched/DataGen/utils/path.cpp << 'EOF'
         #include "path.h"
+		#include <emscripten/val.h>
+		#include <emscripten/bind.h>
         #include <string>
         #include <algorithm>
         #ifdef EMSCRIPTEN
@@ -583,7 +622,7 @@ jobs:
           -s WASM=1 \
           -s MODULARIZE=1 \
           -s EXPORT_NAME='WC3Module' \
-          -s EXPORTED_RUNTIME_METHODS='["FS","ccall","cwrap","getValue","setValue","UTF8ToString","stringToUTF8","lengthBytesUTF8","writeArrayToMemory"]' \
+		  -s EXPORTED_RUNTIME_METHODS='["FS","ccall","cwrap","getValue","setValue","UTF8ToString","stringToUTF8","lengthBytesUTF8","writeArrayToMemory","HEAPU8","HEAP8"]' \
           -s EXPORTED_FUNCTIONS='["_malloc","_free"]' \
           -s ALLOW_MEMORY_GROWTH=1 \
           -s MAXIMUM_MEMORY=2147483648 \
@@ -646,39 +685,57 @@ jobs:
           }
           
           async loadMap(mapData, filename = 'map.w3x') {
-            try {
-              // CORREGIDO: Pasar directamente los datos como están
-              if (this.hasOpenMapFromData) {
-                try {
-                  const nativeMap = this.module.openMapFromData(mapData, filename);
-                  if (nativeMap) {
-                    return new NativeWC3Map(this.module, nativeMap, filename);
-                  }
-                } catch (e) {
-                  console.warn('Native map loading failed:', e.message);
-                }
-              }
-              
-              // Fallback a filesystem con conversión adecuada
-              let fileData;
-              if (mapData instanceof ArrayBuffer) {
-                fileData = new Uint8Array(mapData);
-              } else if (mapData instanceof Uint8Array) {
-                fileData = mapData;
-              } else if (typeof mapData === 'string') {
-                fileData = new TextEncoder().encode(mapData);
-              } else {
-                throw new Error('Unsupported data type');
-              }
-              
-              this.FS.writeFile('/' + filename, fileData);
-              const map = new WC3Map(this.module, filename);
-              await map.load();
-              return map;
-            } catch (error) {
-              throw new Error(`Failed to load map: ${error.message}`);
-            }
-          }
+			  try {
+				// Convertir datos a Uint8Array primero
+				let uint8Data;
+				if (mapData instanceof ArrayBuffer) {
+				  uint8Data = new Uint8Array(mapData);
+				} else if (mapData instanceof Uint8Array) {
+				  uint8Data = mapData;
+				} else if (typeof mapData === 'string') {
+				  // Para strings, usar TextEncoder
+				  uint8Data = new TextEncoder().encode(mapData);
+				} else {
+				  throw new Error('Unsupported data type. Expected ArrayBuffer, Uint8Array, or string.');
+				}
+				
+				// Intentar con la API nativa primero
+				if (this.hasOpenMapFromData) {
+				  try {
+					// Pasar el Uint8Array directamente
+					const nativeMap = this.module.openMapFromData(uint8Data, filename);
+					if (nativeMap) {
+					  return new NativeWC3Map(this.module, nativeMap, filename);
+					}
+				  } catch (e) {
+					console.warn('Native map loading failed:', e.message);
+					console.warn('Trying alternative approach...');
+					
+					// Intentar con conversión a string como fallback
+					try {
+					  let binaryString = '';
+					  for (let i = 0; i < uint8Data.length; i++) {
+						binaryString += String.fromCharCode(uint8Data[i]);
+					  }
+					  const nativeMap = this.module.openMapFromString(binaryString, filename);
+					  if (nativeMap) {
+						return new NativeWC3Map(this.module, nativeMap, filename);
+					  }
+					} catch (e2) {
+					  console.warn('String fallback also failed:', e2.message);
+					}
+				  }
+				}
+				
+				// Fallback a filesystem
+				this.FS.writeFile('/' + filename, uint8Data);
+				const map = new WC3Map(this.module, filename);
+				await map.load();
+				return map;
+			  } catch (error) {
+				throw new Error(`Failed to load map: ${error.message}`);
+			  }
+			}
           
           createMap() {
             if (this.hasCreateMap) {
@@ -693,18 +750,28 @@ jobs:
           }
           
           validateMapData(mapData) {
-            if (this.hasValidateMapData) {
-              try {
-                // CORREGIDO: Pasar datos directamente sin conversión
-                return this.module.validateMapData(mapData);
-              } catch (e) {
-                console.error('Validation error:', e);
-                return false;
-              }
-            }
-            return true; // Assume valid if no validation available
-          }
-        }
+			  if (this.hasValidateMapData) {
+				try {
+				  // Convertir a Uint8Array primero
+				  let uint8Data;
+				  if (mapData instanceof ArrayBuffer) {
+					uint8Data = new Uint8Array(mapData);
+				  } else if (mapData instanceof Uint8Array) {
+					uint8Data = mapData;
+				  } else if (typeof mapData === 'string') {
+					uint8Data = new TextEncoder().encode(mapData);
+				  } else {
+					return false;
+				  }
+				  
+				  return this.module.validateMapData(uint8Data);
+				} catch (e) {
+				  console.error('Validation error:', e);
+				  return false;
+				}
+			  }
+			  return true; // Assume valid if no validation available
+			}
         
         class NativeWC3Map {
           constructor(module, nativeMapInstance, filename) {
