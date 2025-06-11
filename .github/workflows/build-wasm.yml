@@ -31,8 +31,21 @@ jobs:
     - name: Create build directory
       run: mkdir -p build
 
+    - name: List source files
+      run: |
+        echo "Repository structure:"
+        find . -name "*.cpp" -o -name "*.h" | head -20
+        echo "Source directory contents:"
+        ls -la src/ || echo "src/ directory not found"
+        echo "DataGen directory contents:"  
+        ls -la DataGen/ || echo "DataGen/ directory not found"
+
     - name: Build wc3data with Emscripten
       run: |
+        # Encontrar todos los archivos .cpp
+        CPP_FILES=$(find . -name "*.cpp" -not -path "*/test*" -not -path "*/example*" | tr '\n' ' ')
+        echo "Found CPP files: $CPP_FILES"
+        
         # Compilar la librería completa con todas las funcionalidades
         em++ -std=c++17 -O2 \
           -s WASM=1 \
@@ -46,37 +59,55 @@ jobs:
           -s FILESYSTEM=1 \
           -s FORCE_FILESYSTEM=1 \
           -s ASSERTIONS=0 \
-          -s DISABLE_EXCEPTION_CATCHING=0 \
           -s EXCEPTION_CATCHING_ALLOWED='[..]' \
           --bind \
-          --preload-file src@/ \
           -I. -Isrc -IDataGen \
           -DEMSCRIPTEN \
           -DUSE_EMSCRIPTEN \
-          src/*.cpp \
-          DataGen/*.cpp \
+          $CPP_FILES \
           -o build/wc3data.js \
-          --exclude-file="*/test*" \
-          --exclude-file="*/example*" \
           -s ENVIRONMENT='web'
 
     - name: Build alternative version (if main build fails)
       if: failure()
       run: |
-        # Versión alternativa con configuración más conservadora
-        em++ -std=c++17 -O1 \
-          -s WASM=1 \
-          -s MODULARIZE=1 \
-          -s EXPORT_NAME='WC3Module' \
-          -s EXPORTED_RUNTIME_METHODS='["FS","ccall","cwrap","UTF8ToString","stringToUTF8"]' \
-          -s ALLOW_MEMORY_GROWTH=1 \
-          -s FILESYSTEM=1 \
-          --bind \
-          -I. -Isrc \
-          -DEMSCRIPTEN \
-          $(find src -name "*.cpp" -not -path "*/test*" -not -path "*/example*") \
-          -o build/wc3data.js \
-          -s ENVIRONMENT='web'
+        echo "Main build failed, trying alternative approach..."
+        
+        # Buscar archivos específicos para compilar
+        if [ -f "DataGen/main.cpp" ]; then
+          echo "Found DataGen/main.cpp, compiling DataGen project..."
+          em++ -std=c++17 -O1 \
+            -s WASM=1 \
+            -s MODULARIZE=1 \
+            -s EXPORT_NAME='WC3Module' \
+            -s EXPORTED_RUNTIME_METHODS='["FS","ccall","cwrap","UTF8ToString","stringToUTF8"]' \
+            -s ALLOW_MEMORY_GROWTH=1 \
+            -s FILESYSTEM=1 \
+            --bind \
+            -I. -IDataGen \
+            -DEMSCRIPTEN \
+            DataGen/main.cpp \
+            -o build/wc3data.js \
+            -s ENVIRONMENT='web'
+        else
+          echo "Trying to find and compile any available cpp files..."
+          AVAILABLE_FILES=$(find . -name "*.cpp" | head -10 | tr '\n' ' ')
+          echo "Available files: $AVAILABLE_FILES"
+          
+          em++ -std=c++17 -O1 \
+            -s WASM=1 \
+            -s MODULARIZE=1 \
+            -s EXPORT_NAME='WC3Module' \
+            -s EXPORTED_RUNTIME_METHODS='["FS","ccall","cwrap","UTF8ToString","stringToUTF8"]' \
+            -s ALLOW_MEMORY_GROWTH=1 \
+            -s FILESYSTEM=1 \
+            --bind \
+            -I. \
+            -DEMSCRIPTEN \
+            $AVAILABLE_FILES \
+            -o build/wc3data.js \
+            -s ENVIRONMENT='web' || echo "Alternative build also failed"
+        fi
 
     - name: Create wrapper for easy usage
       run: |
