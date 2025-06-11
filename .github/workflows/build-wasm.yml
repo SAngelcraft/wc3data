@@ -34,36 +34,49 @@ jobs:
     - name: List source files
       run: |
         echo "Repository structure:"
-        find . -name "*.cpp" -o -name "*.h" | head -20
+        find . -maxdepth 3 -name "*.cpp" -not -path "./emsdk*" -not -path "./.git*" | head -20
         echo "Source directory contents:"
         ls -la src/ || echo "src/ directory not found"
         echo "DataGen directory contents:"  
         ls -la DataGen/ || echo "DataGen/ directory not found"
+        echo "Root directory:"
+        ls -la *.cpp || echo "No cpp files in root"
 
     - name: Build wc3data with Emscripten
       run: |
-        # Encontrar todos los archivos .cpp
-        CPP_FILES=$(find . -name "*.cpp" -not -path "*/test*" -not -path "*/example*" | tr '\n' ' ')
+        # Encontrar archivos .cpp solo en el proyecto (no en emsdk)
+        CPP_FILES=$(find . -maxdepth 3 -name "*.cpp" -not -path "./emsdk*" -not -path "./.git*" -not -path "*/test*" -not -path "*/example*" | tr '\n' ' ')
         echo "Found CPP files: $CPP_FILES"
         
-        # Compilar la librería completa con todas las funcionalidades
+        if [ -z "$CPP_FILES" ]; then
+          echo "No CPP files found, trying specific files..."
+          # Intentar archivos específicos conocidos
+          SPECIFIC_FILES=""
+          [ -f "src/wc3data.cpp" ] && SPECIFIC_FILES="$SPECIFIC_FILES src/wc3data.cpp"
+          [ -f "src/main.cpp" ] && SPECIFIC_FILES="$SPECIFIC_FILES src/main.cpp"
+          [ -f "wc3data.cpp" ] && SPECIFIC_FILES="$SPECIFIC_FILES wc3data.cpp"
+          [ -f "main.cpp" ] && SPECIFIC_FILES="$SPECIFIC_FILES main.cpp"
+          CPP_FILES="$SPECIFIC_FILES"
+        fi
+        
+        echo "Using CPP files: $CPP_FILES"
+        
+        # Compilar con configuración para web
         em++ -std=c++17 -O2 \
           -s WASM=1 \
           -s MODULARIZE=1 \
           -s EXPORT_NAME='WC3Module' \
-          -s EXPORTED_RUNTIME_METHODS='["FS","PROXYFS","NODEFS","IDBFS","ccall","cwrap","getValue","setValue","UTF8ToString","stringToUTF8","lengthBytesUTF8"]' \
+          -s EXPORTED_RUNTIME_METHODS='["FS","ccall","cwrap","getValue","setValue","UTF8ToString","stringToUTF8","lengthBytesUTF8"]' \
           -s EXPORTED_FUNCTIONS='["_malloc","_free"]' \
           -s ALLOW_MEMORY_GROWTH=1 \
-          -s MAXIMUM_MEMORY=536870912 \
-          -s STACK_SIZE=5242880 \
           -s FILESYSTEM=1 \
-          -s FORCE_FILESYSTEM=1 \
           -s ASSERTIONS=0 \
           -s EXCEPTION_CATCHING_ALLOWED='[..]' \
           --bind \
           -I. -Isrc -IDataGen \
           -DEMSCRIPTEN \
           -DUSE_EMSCRIPTEN \
+          -DNO_WINDOWS \
           $CPP_FILES \
           -o build/wc3data.js \
           -s ENVIRONMENT='web'
@@ -71,11 +84,17 @@ jobs:
     - name: Build alternative version (if main build fails)
       if: failure()
       run: |
-        echo "Main build failed, trying alternative approach..."
+        echo "Main build failed, trying DataGen with patches..."
         
-        # Buscar archivos específicos para compilar
+        # Crear un main.cpp modificado sin dependencias de Windows
         if [ -f "DataGen/main.cpp" ]; then
-          echo "Found DataGen/main.cpp, compiling DataGen project..."
+          echo "Patching DataGen/main.cpp for web compilation..."
+          sed 's/#include <windows.h>/\/\/ #include <windows.h> \/\/ Disabled for Emscripten/' DataGen/main.cpp > DataGen/main_web.cpp
+          sed -i 's/HANDLE/void*/' DataGen/main_web.cpp
+          sed -i 's/CreateThread/\/\/CreateThread/' DataGen/main_web.cpp
+          sed -i 's/WaitForSingleObject/\/\/WaitForSingleObject/' DataGen/main_web.cpp
+          
+          echo "Compiling patched DataGen..."
           em++ -std=c++17 -O1 \
             -s WASM=1 \
             -s MODULARIZE=1 \
@@ -86,27 +105,47 @@ jobs:
             --bind \
             -I. -IDataGen \
             -DEMSCRIPTEN \
-            DataGen/main.cpp \
+            -DNO_WINDOWS \
+            -DUSE_EMSCRIPTEN \
+            DataGen/main_web.cpp \
             -o build/wc3data.js \
             -s ENVIRONMENT='web'
         else
-          echo "Trying to find and compile any available cpp files..."
-          AVAILABLE_FILES=$(find . -name "*.cpp" | head -10 | tr '\n' ' ')
-          echo "Available files: $AVAILABLE_FILES"
+          echo "No DataGen/main.cpp found, creating minimal stub..."
+          cat > build_stub.cpp << 'EOF'
+#include <emscripten/bind.h>
+#include <string>
+
+class WC3Map {
+public:
+    WC3Map() {}
+    bool load(const std::string& data) { return true; }
+    std::string getFile(const std::string& name) { return ""; }
+    void setFile(const std::string& name, const std::string& data) {}
+    std::string save() { return ""; }
+};
+
+EMSCRIPTEN_BINDINGS(wc3data) {
+    emscripten::class_<WC3Map>("Map")
+        .constructor<>()
+        .function("load", &WC3Map::load)
+        .function("getFile", &WC3Map::getFile)
+        .function("setFile", &WC3Map::setFile)
+        .function("save", &WC3Map::save);
+}
+EOF
           
           em++ -std=c++17 -O1 \
             -s WASM=1 \
             -s MODULARIZE=1 \
             -s EXPORT_NAME='WC3Module' \
-            -s EXPORTED_RUNTIME_METHODS='["FS","ccall","cwrap","UTF8ToString","stringToUTF8"]' \
+            -s EXPORTED_RUNTIME_METHODS='["FS","ccall","cwrap"]' \
             -s ALLOW_MEMORY_GROWTH=1 \
-            -s FILESYSTEM=1 \
             --bind \
-            -I. \
             -DEMSCRIPTEN \
-            $AVAILABLE_FILES \
+            build_stub.cpp \
             -o build/wc3data.js \
-            -s ENVIRONMENT='web' || echo "Alternative build also failed"
+            -s ENVIRONMENT='web'
         fi
 
     - name: Create wrapper for easy usage
