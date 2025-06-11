@@ -112,28 +112,10 @@ jobs:
             -s ENVIRONMENT='web'
         else
           echo "No DataGen/main.cpp found, creating minimal stub..."
-          cat > build_stub.cpp << 'STUBEOF'
-#include <emscripten/bind.h>
-#include <string>
-
-class WC3Map {
-public:
-    WC3Map() {}
-    bool load(const std::string& data) { return true; }
-    std::string getFile(const std::string& name) { return ""; }
-    void setFile(const std::string& name, const std::string& data) {}
-    std::string save() { return ""; }
-};
-
-EMSCRIPTEN_BINDINGS(wc3data) {
-    emscripten::class_<WC3Map>("Map")
-        .constructor<>()
-        .function("load", &WC3Map::load)
-        .function("getFile", &WC3Map::getFile)
-        .function("setFile", &WC3Map::setFile)
-        .function("save", &WC3Map::save);
-}
-STUBEOF
+          echo '#include <emscripten/bind.h>' > build_stub.cpp
+          echo '#include <string>' >> build_stub.cpp
+          echo 'class WC3Map { public: WC3Map() {} bool load(const std::string& data) { return true; } std::string getFile(const std::string& name) { return ""; } void setFile(const std::string& name, const std::string& data) {} std::string save() { return ""; } };' >> build_stub.cpp
+          echo 'EMSCRIPTEN_BINDINGS(wc3data) { emscripten::class_<WC3Map>("Map").constructor<>().function("load", &WC3Map::load).function("getFile", &WC3Map::getFile).function("setFile", &WC3Map::setFile).function("save", &WC3Map::save); }' >> build_stub.cpp
           
           em++ -std=c++17 -O1 \
             -s WASM=1 \
