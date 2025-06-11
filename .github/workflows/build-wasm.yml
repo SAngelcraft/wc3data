@@ -108,6 +108,7 @@ jobs:
           
           void archive_close(int handle) {
             // Cleanup placeholder
+            (void)handle; // Suppress unused parameter warning
           }
         }
         EOF
@@ -134,6 +135,7 @@ jobs:
           cat > DataGen/src/mpq.cpp << 'EOF'
         #include <cstdint>
         #include <cstring>
+        #include <cstdlib>
         
         // MPQ format handling placeholder
         extern "C" {
@@ -152,7 +154,7 @@ jobs:
             // Simplified extraction - just return dummy data
             const char* content = "// Extracted file placeholder\n";
             size_t len = strlen(content);
-            *output = malloc(len + 1);
+            *output = (void*)malloc(len + 1);
             if (*output) {
               strcpy((char*)*output, content);
               *output_size = len;
