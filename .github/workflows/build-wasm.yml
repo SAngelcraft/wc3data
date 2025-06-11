@@ -27,12 +27,10 @@ jobs:
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential cmake
-
     - name: Verify Emscripten installation
       run: |
         emcc --version
         which emcc
-
     - name: Create build directory
       run: mkdir -p build
 
@@ -42,7 +40,6 @@ jobs:
         find . -maxdepth 3 -type f -name "*.h" -not -path "./emsdk*" -not -path "./.git*" | head -10
         ls -la DataGen/ || echo "DataGen directory not found"
         find . -name "*map*" -type f | grep -E "\.(h|hpp|cpp)$" | head -10
-
     - name: Create Embind bindings for Map API
       run: |
         cat > build/embind_bindings.cpp << 'EOF'
@@ -52,7 +49,6 @@ jobs:
         #include <vector>
         #include <memory>
         #include <cstdint>
-
         #ifdef __has_include
         #if __has_include("DataGen/rmpq/rmpq.h")
         #include "DataGen/rmpq/rmpq.h"
@@ -64,9 +60,7 @@ jobs:
         #include "DataGen/archive.h"
         #endif
         #endif
-
         using namespace emscripten;
-
         // Estructura simple para almacenar datos del mapa
         struct MapData {
             std::vector<uint8_t> data;
@@ -76,13 +70,11 @@ jobs:
             MapData() : valid(false) {}
             MapData(const std::string& name) : filename(name), valid(false) {}
         };
-
         class MapWrapper {
         private:
             std::unique_ptr<MapData> mapData;
             std::string filename;
             bool loaded;
-
         public:
             MapWrapper() : loaded(false) {
                 mapData = std::make_unique<MapData>();
@@ -91,19 +83,8 @@ jobs:
             MapWrapper(const std::string& file) : filename(file), loaded(false) {
                 mapData = std::make_unique<MapData>(file);
             }
-
-            // Método estático load que acepta val (emscripten::val)
-            static MapWrapper* load(const val& data, const std::string& filename = "map.w3x") {
-                auto* map = new MapWrapper(filename);
-                if (map->loadFromVal(data)) {
-                    return map;
-                }
-                delete map;
-                return nullptr;
-            }
-
-            // Sobrecarga para string
-            static MapWrapper* loadFromString(const std::string& data, const std::string& filename = "map.w3x") {
+            // Método estático load para crear una instancia desde datos
+            static MapWrapper* load(const std::string& data, const std::string& filename = "map.w3x") {
                 auto* map = new MapWrapper(filename);
                 if (map->loadFromData(data)) {
                     return map;
@@ -111,50 +92,6 @@ jobs:
                 delete map;
                 return nullptr;
             }
-
-            bool loadFromVal(const val& data) {
-                try {
-                    if (!mapData) {
-                        mapData = std::make_unique<MapData>();
-                    }
-                    mapData->data.clear();
-
-                    // Detectar tipo de dato JavaScript
-                    if (data.hasOwnProperty("length")) {
-                        // Es un array-like (Uint8Array, ArrayBuffer view, etc.)
-                        unsigned int length = data["length"].as<unsigned int>();
-                        mapData->data.reserve(length);
-                        
-                        for (unsigned int i = 0; i < length; ++i) {
-                            mapData->data.push_back(data[i].as<uint8_t>());
-                        }
-                    } else if (data.hasOwnProperty("byteLength")) {
-                        // Es un ArrayBuffer
-                        val uint8Array = val::global("Uint8Array").new_(data);
-                        unsigned int length = uint8Array["length"].as<unsigned int>();
-                        mapData->data.reserve(length);
-                        
-                        for (unsigned int i = 0; i < length; ++i) {
-                            mapData->data.push_back(uint8Array[i].as<uint8_t>());
-                        }
-                    } else {
-                        // Intentar como string
-                        std::string str = data.as<std::string>();
-                        mapData->data.reserve(str.size());
-                        for (char c : str) {
-                            mapData->data.push_back(static_cast<uint8_t>(c));
-                        }
-                    }
-                    
-                    mapData->valid = true;
-                    loaded = true;
-                    return true;
-                } catch (...) {
-                    loaded = false;
-                    return false;
-                }
-            }
-
             bool loadFromData(const std::string& data) {
                 try {
                     if (!mapData) {
@@ -173,7 +110,6 @@ jobs:
                     return false;
                 }
             }
-
             std::string getFile(const std::string& path) {
                 if (!loaded || !mapData || !mapData->valid) return "";
                 try {
@@ -190,7 +126,6 @@ jobs:
                     return "";
                 }
             }
-
             bool setFile(const std::string& path, const std::string& content) {
                 if (!loaded || !mapData) return false;
                 try {
@@ -201,7 +136,6 @@ jobs:
                     return false;
                 }
             }
-
             std::vector<std::string> listFiles() {
                 std::vector<std::string> files;
                 if (!loaded || !mapData || !mapData->valid) return files;
@@ -222,27 +156,20 @@ jobs:
                 
                 return files;
             }
-
-            val save() {
-                if (!loaded || !mapData || !mapData->valid) {
-                    return val::null();
-                }
+            std::string save() {
+                if (!loaded || !mapData || !mapData->valid) return "";
                 try {
-                    // Crear Uint8Array en JavaScript
-                    val uint8ArrayConstructor = val::global("Uint8Array");
-                    val result = uint8ArrayConstructor.new_(mapData->data.size());
-                    
-                    // Copiar datos
-                    for (size_t i = 0; i < mapData->data.size(); ++i) {
-                        result.set(i, val(mapData->data[i]));
+                    // Convertir los datos binarios a string para retornar
+                    std::string result;
+                    result.reserve(mapData->data.size());
+                    for (uint8_t byte : mapData->data) {
+                        result.push_back(static_cast<char>(byte));
                     }
-                    
                     return result;
                 } catch (...) {
-                    return val::null();
+                    return "";
                 }
             }
-
             bool isLoaded() const { return loaded; }
             std::string getFilename() const { return filename; }
             
@@ -255,19 +182,9 @@ jobs:
                 return loaded && mapData && mapData->valid;
             }
         };
-
         class ArchiveWrapper {
         public:
-            static MapWrapper* openMap(const val& data, const std::string& filename) {
-                auto* map = new MapWrapper(filename);
-                if (map->loadFromVal(data)) {
-                    return map;
-                }
-                delete map;
-                return nullptr;
-            }
-            
-            static MapWrapper* openMapFromString(const std::string& data, const std::string& filename) {
+            static MapWrapper* openMap(const std::string& data, const std::string& filename) {
                 auto* map = new MapWrapper(filename);
                 if (map->loadFromData(data)) {
                     return map;
@@ -276,32 +193,17 @@ jobs:
                 return nullptr;
             }
             
-            static bool isValidMapData(const val& data) {
-                try {
-                    // Verificación básica de firma de archivo ZIP/MPQ
-                    if (data.hasOwnProperty("length") && data["length"].as<unsigned int>() < 4) {
-                        return false;
-                    }
-                    
-                    // Obtener los primeros bytes para verificar firma
-                    std::string header;
-                    if (data.hasOwnProperty("length")) {
-                        unsigned int length = std::min(4u, data["length"].as<unsigned int>());
-                        for (unsigned int i = 0; i < length; ++i) {
-                            header += static_cast<char>(data[i].as<uint8_t>());
-                        }
-                    } else {
-                        std::string str = data.as<std::string>();
-                        header = str.substr(0, 4);
-                    }
-                    
-                    // Verificar firma PK (ZIP) o MPQ
-                    return (header.substr(0, 2) == "PK") || (header.find("MPQ") != std::string::npos);
-                } catch (...) {
-                    return false;
-                }
+            static bool isValidMapData(const std::string& data) {
+                // Verificación básica de firma de archivo ZIP/MPQ
+                if (data.size() < 4) return false;
+                
+                // Verificar firma PK (ZIP) o MPQ
+                const std::string pk_signature = "PK";
+                const std::string mpq_signature = "MPQ";
+                
+                return (data.substr(0, 2) == pk_signature) || 
+                       (data.find(mpq_signature) != std::string::npos);
             }
-
             // Método estático para crear un nuevo mapa vacío
             static MapWrapper* createMap(const std::string& filename = "new_map.w3x") {
                 auto* map = new MapWrapper(filename);
@@ -314,19 +216,17 @@ jobs:
                 return nullptr;
             }
         };
-
         // Clase wrapper adicional para API de alto nivel
         class Map {
         public:
             // Método estático load que retorna una instancia de Map
-            static Map* load(const val& data, const std::string& filename = "map.w3x") {
+            static Map* load(const std::string& data, const std::string& filename = "map.w3x") {
                 auto* wrapper = MapWrapper::load(data, filename);
                 if (wrapper) {
                     return new Map(wrapper);
                 }
                 return nullptr;
             }
-
             // Constructor que toma un MapWrapper
             Map(MapWrapper* wrapper) : mapWrapper(wrapper) {}
             
@@ -336,44 +236,34 @@ jobs:
                     delete mapWrapper;
                 }
             }
-
             // Métodos de instancia que delegan al MapWrapper
             std::string getFile(const std::string& path) {
                 return mapWrapper ? mapWrapper->getFile(path) : "";
             }
-
             bool setFile(const std::string& path, const std::string& content) {
                 return mapWrapper ? mapWrapper->setFile(path, content) : false;
             }
-
             std::vector<std::string> listFiles() {
                 return mapWrapper ? mapWrapper->listFiles() : std::vector<std::string>();
             }
-
-            val save() {
-                return mapWrapper ? mapWrapper->save() : val::null();
+            std::string save() {
+                return mapWrapper ? mapWrapper->save() : "";
             }
-
             bool isLoaded() const {
                 return mapWrapper ? mapWrapper->isLoaded() : false;
             }
-
             std::string getFilename() const {
                 return mapWrapper ? mapWrapper->getFilename() : "";
             }
-
             size_t getDataSize() const {
                 return mapWrapper ? mapWrapper->getDataSize() : 0;
             }
-
             bool isValid() const {
                 return mapWrapper ? mapWrapper->isValid() : false;
             }
-
         private:
             MapWrapper* mapWrapper;
         };
-
         EMSCRIPTEN_BINDINGS(wc3data_module) {
             register_vector<std::string>("VectorString");
             
@@ -382,8 +272,6 @@ jobs:
                 .constructor<>()
                 .constructor<const std::string&>()
                 .class_function("load", &MapWrapper::load, allow_raw_pointers())
-                .class_function("loadFromString", &MapWrapper::loadFromString, allow_raw_pointers())
-                .function("loadFromVal", &MapWrapper::loadFromVal)
                 .function("loadFromData", &MapWrapper::loadFromData)
                 .function("getFile", &MapWrapper::getFile)
                 .function("setFile", &MapWrapper::setFile) 
@@ -397,7 +285,6 @@ jobs:
             // Bindings para ArchiveWrapper (utilidades estáticas)
             class_<ArchiveWrapper>("Archive")
                 .class_function("openMap", &ArchiveWrapper::openMap, allow_raw_pointers())
-                .class_function("openMapFromString", &ArchiveWrapper::openMapFromString, allow_raw_pointers())
                 .class_function("isValidMapData", &ArchiveWrapper::isValidMapData)
                 .class_function("createMap", &ArchiveWrapper::createMap, allow_raw_pointers());
             
@@ -418,25 +305,19 @@ jobs:
                 return new MapWrapper();
             }), allow_raw_pointers());
             
-            function("openMapFromData", optional_override([](const val& data, const std::string& filename) {
+            function("openMapFromData", optional_override([](const std::string& data, const std::string& filename) {
                 return ArchiveWrapper::openMap(data, filename);
             }), allow_raw_pointers());
             
-            function("openMapFromString", optional_override([](const std::string& data, const std::string& filename) {
-                return ArchiveWrapper::openMapFromString(data, filename);
-            }), allow_raw_pointers());
-            
-            function("validateMapData", optional_override([](const val& data) {
+            function("validateMapData", optional_override([](const std::string& data) {
                 return ArchiveWrapper::isValidMapData(data);
             }));
-
             // Función de alto nivel para cargar mapas
-            function("loadMap", optional_override([](const val& data, const std::string& filename) {
+            function("loadMap", optional_override([](const std::string& data, const std::string& filename) {
                 return Map::load(data, filename);
             }), allow_raw_pointers());
         }
         EOF
-
     - name: Create platform compatibility patches
       run: |
         mkdir -p build/patched
@@ -446,7 +327,6 @@ jobs:
           mkdir -p build/patched/DataGen/utils
           mkdir -p build/patched/DataGen/rmpq
         fi
-
         cat > build/patched/DataGen/utils/path.cpp << 'EOF'
         #include "path.h"
         #include <string>
@@ -454,7 +334,6 @@ jobs:
         #ifdef EMSCRIPTEN
         #include <emscripten.h>
         #endif
-
         #ifdef _WIN32
         #include <windows.h>
         #include <shlwapi.h>
@@ -464,7 +343,6 @@ jobs:
         #include <sys/stat.h>
         #include <limits.h>
         #endif
-
         std::string path::getExePath() {
         #ifdef EMSCRIPTEN
             return "/";
@@ -482,7 +360,6 @@ jobs:
             return "";
         #endif
         }
-
         void path::setWorkingDir(const std::string& dir) {
         #ifdef EMSCRIPTEN
             return;
@@ -492,7 +369,6 @@ jobs:
             chdir(dir.c_str());
         #endif
         }
-
         std::string path::getWorkingDir() {
         #ifdef EMSCRIPTEN
             return "/";
@@ -508,7 +384,6 @@ jobs:
             return "";
         #endif
         }
-
         std::string path::normalize(const std::string& path) {
             std::string result = path;
             std::replace(result.begin(), result.end(), '\\', '/');
@@ -518,7 +393,6 @@ jobs:
             }
             return result;
         }
-
         std::string path::join(const std::string& a, const std::string& b) {
             if (a.empty()) return b;
             if (b.empty()) return a;
@@ -532,7 +406,6 @@ jobs:
             }
             return normalize(result + part);
         }
-
         std::string path::dirname(const std::string& path) {
             size_t pos = path.find_last_of("/\\");
             if (pos == std::string::npos) {
@@ -540,7 +413,6 @@ jobs:
             }
             return path.substr(0, pos);
         }
-
         std::string path::basename(const std::string& path) {
             size_t pos = path.find_last_of("/\\");
             if (pos == std::string::npos) {
@@ -548,7 +420,6 @@ jobs:
             }
             return path.substr(pos + 1);
         }
-
         bool path::exists(const std::string& path) {
         #ifdef EMSCRIPTEN
             return true;
@@ -559,7 +430,6 @@ jobs:
             return stat(path.c_str(), &st) == 0;
         #endif
         }
-
         bool path::isFile(const std::string& path) {
         #ifdef EMSCRIPTEN
             return true;
@@ -571,7 +441,6 @@ jobs:
             return (stat(path.c_str(), &st) == 0) && S_ISREG(st.st_mode);
         #endif
         }
-
         bool path::isDirectory(const std::string& path) {
         #ifdef EMSCRIPTEN
             return false;
@@ -584,11 +453,9 @@ jobs:
         #endif
         }
         EOF
-
         cat > build/patched/DataGen/utils/path.h << 'EOF'
         #pragma once
         #include <string>
-
         namespace path {
             std::string getExePath();
             void setWorkingDir(const std::string& dir);
@@ -602,7 +469,6 @@ jobs:
             bool isDirectory(const std::string& path);
         }
         EOF
-
     - name: Build WC3Data with Map API bindings
       run: |
         CPP_FILES=$(find ./build/patched/DataGen -name "*.cpp" \
@@ -663,7 +529,6 @@ jobs:
               ./build/patched/DataGen/utils/path.cpp \
               -o build/wc3data.js
           }
-
     - name: Create enhanced JavaScript API wrapper
       run: |
         cat > build/wc3data-enhanced-api.js << 'EOF'
@@ -680,38 +545,30 @@ jobs:
           
           async loadMap(mapData, filename = 'map.w3x') {
             try {
-              // Usar directamente el objeto JavaScript sin conversión
+              // Convertir ArrayBuffer/Uint8Array a string si es necesario
+              let dataStr;
+              if (mapData instanceof ArrayBuffer || mapData instanceof Uint8Array) {
+                dataStr = String.fromCharCode.apply(null, new Uint8Array(mapData));
+              } else {
+                dataStr = mapData;
+              }
+              
+              // Validar datos del mapa si está disponible
               if (this.hasValidateMapData) {
-                try {
-                  const isValid = this.module.validateMapData(mapData);
-                  if (!isValid) {
-                    console.warn('Map data validation failed, proceeding anyway...');
-                  }
-                } catch (e) {
-                  console.warn('Validation failed:', e.message);
+                const isValid = this.module.validateMapData(dataStr);
+                if (!isValid) {
+                  console.warn('Map data validation failed, proceeding anyway...');
                 }
               }
               
               if (this.hasOpenMapFromData) {
                 try {
-                  const nativeMap = this.module.openMapFromData(mapData, filename);
+                  const nativeMap = this.module.openMapFromData(dataStr, filename);
                   if (nativeMap) {
                     return new NativeWC3Map(this.module, nativeMap, filename);
                   }
                 } catch (e) {
                   console.warn('Native map loading failed:', e.message);
-                }
-              }
-              
-              // Fallback usando loadFromString si mapData es string
-              if (typeof mapData === 'string' && this.module.openMapFromString) {
-                try {
-                  const nativeMap = this.module.openMapFromString(mapData, filename);
-                  if (nativeMap) {
-                    return new NativeWC3Map(this.module, nativeMap, filename);
-                  }
-                } catch (e) {
-                  console.warn('String map loading failed:', e.message);
                 }
               }
               
@@ -740,7 +597,13 @@ jobs:
           validateMapData(mapData) {
             if (this.hasValidateMapData) {
               try {
-                return this.module.validateMapData(mapData);
+                let dataStr;
+                if (mapData instanceof ArrayBuffer || mapData instanceof Uint8Array) {
+                  dataStr = String.fromCharCode.apply(null, new Uint8Array(mapData));
+                } else {
+                  dataStr = mapData;
+                }
+                return this.module.validateMapData(dataStr);
               } catch (e) {
                 return false;
               }
@@ -800,9 +663,6 @@ jobs:
               }
               return [];
             } catch (e) {
-
-
-
               console.error('Error listing files:', e.message);
               return [];
             }
@@ -811,38 +671,30 @@ jobs:
           save() {
             try {
               if (this.nativeMap && this.nativeMap.save) {
-                const result = this.nativeMap.save();
-                if (result && result !== null) {
-                  return result;
+                const savedData = this.nativeMap.save();
+                if (typeof savedData === 'string') {
+                  const buffer = new ArrayBuffer(savedData.length);
+                  const view = new Uint8Array(buffer);
+                  for (let i = 0; i < savedData.length; i++) {
+                    view[i] = savedData.charCodeAt(i);
+                  }
+                  return view;
                 }
               }
-              return null;
+              throw new Error('Native save not available');
             } catch (e) {
-              console.error('Error saving map:', e.message);
-              return null;
+              throw new Error(`Save failed: ${e.message}`);
             }
           }
           
           isLoaded() {
-            try {
-              if (this.nativeMap && this.nativeMap.isLoaded) {
-                return this.nativeMap.isLoaded();
-              }
-              return false;
-            } catch (e) {
-              return false;
-            }
+            return this.nativeMap && 
+                   (typeof this.nativeMap.isLoaded === 'function' ? 
+                    this.nativeMap.isLoaded() : true);
           }
           
-          isValid() {
-            try {
-              if (this.nativeMap && this.nativeMap.isValid) {
-                return this.nativeMap.isValid();
-              }
-              return false;
-            } catch (e) {
-              return false;
-            }
+          getFilename() {
+            return this.filename;
           }
           
           getDataSize() {
@@ -856,8 +708,15 @@ jobs:
             }
           }
           
-          getFilename() {
-            return this.filename;
+          isValid() {
+            try {
+              if (this.nativeMap && this.nativeMap.isValid) {
+                return this.nativeMap.isValid();
+              }
+              return this.isLoaded();
+            } catch (e) {
+              return false;
+            }
           }
         }
         
@@ -867,160 +726,82 @@ jobs:
             this.FS = module.FS;
             this.filename = filename;
             this.loaded = false;
-            
-            // Archivos típicos de un mapa de Warcraft III
-            this.commonFiles = [
-              'war3map.j',      // JASS script
-              'war3map.w3i',    // Map info
-              'war3map.wts',    // String table
-              'war3map.w3u',    // Custom units
-              'war3map.w3t',    // Custom items
-              'war3map.w3a',    // Custom abilities
-              'war3map.w3q',    // Custom upgrades
-              'war3map.w3e',    // Environment
-              'war3map.wpm',    // Path map
-              'war3map.w3r',    // Regions
-              'war3map.doo',    // Destructables
-              'war3mapUnits.doo', // Units
-              'war3map.w3c',    // Cameras
-              'war3map.w3s',    // Sounds
-            ];
           }
           
           async load() {
-            try {
-              if (this.filename && this.FS.analyzePath('/' + this.filename).exists) {
-                const data = this.FS.readFile('/' + this.filename);
-                this.loaded = data && data.length > 0;
-                return this.loaded;
-              }
-              return false;
-            } catch (error) {
-              console.error('Error loading map:', error.message);
-              return false;
+            if (this.filename && this.FS.analyzePath('/' + this.filename).exists) {
+              this.loaded = true;
             }
           }
           
           getFile(path) {
             try {
-              if (!this.loaded) return null;
+              const possiblePaths = [
+                '/' + this.filename + '/' + path,
+                '/' + path,
+                path
+              ];
               
-              // Simular contenido de archivos comunes
-              switch (path) {
-                case 'war3map.j':
-                  return `function InitTrig_Example takes nothing returns nothing
-    // Generated trigger function
-endfunction
-
-function InitCustomTriggers takes nothing returns nothing
-    call InitTrig_Example()
-endfunction
-
-function main takes nothing returns nothing
-    call SetCameraBounds(-3328.0 + GetCameraMargin(CAMERA_MARGIN_LEFT), -3584.0 + GetCameraMargin(CAMERA_MARGIN_BOTTOM), 3328.0 - GetCameraMargin(CAMERA_MARGIN_RIGHT), 3072.0 - GetCameraMargin(CAMERA_MARGIN_TOP), -3328.0 + GetCameraMargin(CAMERA_MARGIN_LEFT), 3072.0 - GetCameraMargin(CAMERA_MARGIN_TOP), 3328.0 - GetCameraMargin(CAMERA_MARGIN_RIGHT), -3584.0 + GetCameraMargin(CAMERA_MARGIN_BOTTOM))
-    call InitCustomTriggers()
-endfunction`;
-                
-                case 'war3map.w3i':
-                  return `// Map Information File
-Name=Example Map
-Author=WC3Data
-Description=Example map created with WC3Data API
-Players=2
-Size=96x96
-Tileset=Lordaeron Summer
-Camera=war3map.w3c`;
-                
-                case 'war3map.wts':
-                  return `STRING 1
-{
-"Example String"
-}
-
-STRING 2
-{
-"Another Example"
-}`;
-                
-                case 'war3map.w3u':
-                  return `// Custom Units
-[hfoo]
-Name=Custom Footman
-Life=550
-Mana=200`;
-                
-                default:
-                  // Intentar leer archivo real del sistema de archivos
-                  if (this.FS.analyzePath('/' + path).exists) {
-                    const data = this.FS.readFile('/' + path, { encoding: 'utf8' });
-                    return data;
+              for (const testPath of possiblePaths) {
+                try {
+                  if (this.FS.analyzePath(testPath).exists) {
+                    return this.FS.readFile(testPath, { encoding: 'utf8' });
                   }
-                  return null;
+                } catch (e) {
+                  continue;
+                }
               }
-            } catch (error) {
-              console.error(`Error getting file ${path}:`, error.message);
+              return null;
+            } catch (e) {
               return null;
             }
           }
           
           setFile(path, content) {
             try {
-              if (!this.loaded) return false;
-              
-              // Escribir archivo al sistema de archivos virtual
-              this.FS.writeFile('/' + path, content);
+              const fullPath = '/' + path;
+              this.FS.writeFile(fullPath, content);
               return true;
-            } catch (error) {
-              console.error(`Error setting file ${path}:`, error.message);
+            } catch (e) {
               return false;
             }
           }
           
           listFiles() {
             try {
-              if (!this.loaded) return [];
-              
-              // Combinar archivos comunes con archivos reales del FS
-              const files = [...this.commonFiles];
-              
-              try {
-                const fsFiles = this.FS.readdir('/').filter(name => 
-                  name !== '.' && 
-                  name !== '..' && 
-                  name.includes('.') && 
-                  !files.includes(name)
-                );
-                files.push(...fsFiles);
-              } catch (e) {
-                // Ignorar errores de lectura del directorio
-              }
-              
+              const files = [];
+              const traverse = (path) => {
+                try {
+                  const entries = this.FS.readdir(path);
+                  for (const entry of entries) {
+                    if (entry === '.' || entry === '..') continue;
+                    const fullPath = path + '/' + entry;
+                    try {
+                      const stat = this.FS.stat(fullPath);
+                      if (this.FS.isFile(stat.mode)) {
+                        files.push(fullPath.replace(/^\/+/, ''));
+                      } else if (this.FS.isDir(stat.mode)) {
+                        traverse(fullPath);
+                      }
+                    } catch (e) {}
+                  }
+                } catch (e) {}
+              };
+              traverse('/');
               return files;
-            } catch (error) {
-              console.error('Error listing files:', error.message);
-              return this.commonFiles;
+            } catch (e) {
+              return [];
             }
           }
           
           save() {
             try {
-              if (!this.loaded) return null;
-              
-              // Crear un archivo ZIP simple con los datos del mapa
-              const filename = this.filename || 'map.w3x';
-              
-              // Si existe el archivo en el FS, devolverlo
-              if (this.FS.analyzePath('/' + filename).exists) {
-                const data = this.FS.readFile('/' + filename);
-                return new Uint8Array(data);
+              if (this.filename && this.FS.analyzePath('/' + this.filename).exists) {
+                return this.FS.readFile('/' + this.filename);
               }
-              
-              // Crear datos mínimos de mapa (firma ZIP)
-              const minimalMapData = new Uint8Array([0x50, 0x4B, 0x03, 0x04]); // "PK\x03\x04"
-              return minimalMapData;
-            } catch (error) {
-              console.error('Error saving map:', error.message);
-              return null;
+              throw new Error('Save functionality requires native map building support');
+            } catch (e) {
+              throw new Error(`Save failed: ${e.message}`);
             }
           }
           
@@ -1028,105 +809,197 @@ Mana=200`;
             return this.loaded;
           }
           
-          isValid() {
-            return this.loaded;
+          getFilename() {
+            return this.filename;
           }
           
           getDataSize() {
             try {
-              if (!this.loaded || !this.filename) return 0;
-              
-              if (this.FS.analyzePath('/' + this.filename).exists) {
+              if (this.filename && this.FS.analyzePath('/' + this.filename).exists) {
                 const stat = this.FS.stat('/' + this.filename);
-                return stat.size || 0;
+                return stat.size;
               }
               return 0;
-            } catch (error) {
+            } catch (e) {
               return 0;
             }
           }
           
-          getFilename() {
-            return this.filename || 'unknown.w3x';
+          isValid() {
+            return this.isLoaded();
           }
         }
         
-        // Función de utilidad para inicializar el módulo
-        async function initWC3Data(wasmModule) {
-          try {
-            const module = await wasmModule();
-            return new WC3DataAPI(module);
-          } catch (error) {
-            throw new Error(`Failed to initialize WC3Data module: ${error.message}`);
-          }
-        }
+        let wc3DataInstance = null;
         
-        // Función de utilidad para validar datos de mapa
-        function validateMapBuffer(buffer) {
-          try {
-            if (!buffer || buffer.length < 4) {
-              return false;
+        async function initWC3Data(options = {}) {
+          if (!wc3DataInstance) {
+            try {
+              const module = await WC3Module({
+                preRun: options.preRun || [],
+                postRun: options.postRun || [],
+                print: options.print || console.log,
+                printErr: options.printErr || console.error,
+                ...options
+              });
+              wc3DataInstance = new WC3DataAPI(module);
+            } catch (error) {
+              throw new Error(`Failed to initialize WC3Data: ${error.message}`);
             }
-            
-            const view = new Uint8Array(buffer);
-            
-            // Verificar firma ZIP (PK)
-            if (view[0] === 0x50 && view[1] === 0x4B) {
-              return true;
-            }
-            
-            // Verificar firma MPQ
-            const mpqSignature = new TextDecoder().decode(view.slice(0, 4));
-            if (mpqSignature.indexOf('MPQ') !== -1) {
-              return true;
-            }
-            
-            return false;
-          } catch (error) {
-            console.error('Error validating map buffer:', error.message);
-            return false;
           }
+          return wc3DataInstance;
         }
         
-        // Función de utilidad para crear un mapa desde ArrayBuffer
-        function createMapFromArrayBuffer(buffer, filename = 'map.w3x') {
-          if (!validateMapBuffer(buffer)) {
-            throw new Error('Invalid map data: Not a valid ZIP or MPQ file');
-          }
-          
-          return new Uint8Array(buffer);
-        }
-        
-        // Función de utilidad para convertir File a ArrayBuffer
-        function fileToArrayBuffer(file) {
-          return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = () => resolve(reader.result);
-            reader.onerror = () => reject(new Error('Failed to read file'));
-            reader.readAsArrayBuffer(file);
-          });
-        }
-        
-        // Exportar las clases y funciones
         if (typeof module !== 'undefined' && module.exports) {
-          // Node.js
-          module.exports = {
-            WC3DataAPI,
-            NativeWC3Map,
-            WC3Map,
-            initWC3Data,
-            validateMapBuffer,
-            createMapFromArrayBuffer,
-            fileToArrayBuffer
-          };
+          module.exports = { initWC3Data, WC3DataAPI, WC3Map, NativeWC3Map };
         } else if (typeof window !== 'undefined') {
-          // Browser
-          window.WC3DataAPI = WC3DataAPI;
-          window.NativeWC3Map = NativeWC3Map;
-          window.WC3Map = WC3Map;
           window.initWC3Data = initWC3Data;
-          window.validateMapBuffer = validateMapBuffer;
-          window.createMapFromArrayBuffer = createMapFromArrayBuffer;
-          window.fileToArrayBuffer = fileToArrayBuffer;
+          window.WC3DataAPI = WC3DataAPI;
+          window.WC3Map = WC3Map;
+          window.NativeWC3Map = NativeWC3Map;
         }
         EOF
+    - name: Verify build artifacts
+      run: |
+        echo "Build artifacts:"
+        ls -la build/
+        echo "Checking for essential files:"
+        [ -f "build/wc3data.js" ] && echo "✓ wc3data.js exists" || echo "✗ wc3data.js missing"
+        [ -f "build/wc3data.wasm" ] && echo "✓ wc3data.wasm exists" || echo "✗ wc3data.wasm missing"
+        [ -f "build/wc3data-enhanced-api.js" ] && echo "✓ Enhanced API exists" || echo "✗ Enhanced API missing"
+        
+        echo "WASM file size:"
+        du -h build/wc3data.wasm 2>/dev/null || echo "WASM file not found"
+        
+        echo "JS file size:"
+        du -h build/wc3data.js 2>/dev/null || echo "JS file not found"
+		
+ - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: wc3data-webassembly
+        path: |
+          build/wc3data.js
+          build/wc3data.wasm
+          build/wc3data-enhanced-api.js
+          build/string-fix.js
+          build/test.html
+          build/deploy/README.md
+        retention-days: 30
+		
+	- name: Create test HTML file
+      run: |
+        cat > build/test.html << 'EOF'
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>WC3Data Test</title>
+        </head>
+        <body>
+            <input type="file" id="fileInput" accept=".w3x,.w3m">
+            <div id="output"></div>
+            <script src="wc3data.js"></script>
+            <script src="wc3data-enhanced-api.js"></script>
+            <script>
+                async function testWC3Data() {
+                    try {
+                        const wc3 = await initWC3Data();
+                        console.log('WC3Data initialized successfully');
+                        
+                        document.getElementById('fileInput').addEventListener('change', async (e) => {
+                            const file = e.target.files[0];
+                            if (!file) return;
+                            
+                            const arrayBuffer = await file.arrayBuffer();
+                            const uint8Array = new Uint8Array(arrayBuffer);
+                            
+                            try {
+                                const map = await wc3.loadMap(uint8Array, file.name);
+                                console.log('Map loaded:', map.getFilename());
+                                
+                                const files = map.listFiles();
+                                document.getElementById('output').innerHTML = 
+                                    '<h3>Files in map:</h3>' + 
+                                    files.map(f => `<li>${f}</li>`).join('');
+                            } catch (error) {
+                                console.error('Error loading map:', error);
+                                document.getElementById('output').innerHTML = 
+                                    '<p style="color:red">Error: ' + error.message + '</p>';
+                            }
+                        });
+                    } catch (error) {
+                        console.error('Failed to initialize WC3Data:', error);
+                    }
+                }
+                testWC3Data();
+            </script>
+        </body>
+        </html>
+        EOF
+
+    - name: Fix string conversion issues
+      run: |
+        cat > build/string-fix.js << 'EOF'
+        // Patch para arreglar problemas de conversión de string en Emscripten
+        if (typeof Module !== 'undefined') {
+            const originalStringToUTF8 = Module.stringToUTF8;
+            Module.stringToUTF8 = function(str, outPtr, maxBytesToWrite) {
+                if (typeof str !== 'string') {
+                    if (str instanceof ArrayBuffer || str instanceof Uint8Array) {
+                        str = String.fromCharCode.apply(null, new Uint8Array(str));
+                    } else {
+                        str = String(str);
+                    }
+                }
+                return originalStringToUTF8.call(this, str, outPtr, maxBytesToWrite);
+            };
+        }
+        EOF
+
+    - name: Create deployment package
+      run: |
+        mkdir -p build/deploy
+        cp build/wc3data.js build/deploy/
+        cp build/wc3data.wasm build/deploy/
+        cp build/wc3data-enhanced-api.js build/deploy/
+        cp build/string-fix.js build/deploy/
+        cp build/test.html build/deploy/
+        
+        cat > build/deploy/README.md << 'EOF'
+        # WC3Data WebAssembly Build
+        
+        ## Files included:
+        - `wc3data.js` - Main WebAssembly module
+        - `wc3data.wasm` - WebAssembly binary
+        - `wc3data-enhanced-api.js` - Enhanced JavaScript API
+        - `string-fix.js` - String conversion fixes
+        - `test.html` - Test page
+        
+        ## Usage:
+        ```javascript
+        // Include the string fix first
+        <script src="string-fix.js"></script>
+        <script src="wc3data.js"></script>
+        <script src="wc3data-enhanced-api.js"></script>
+        
+        // Initialize and use
+        const wc3 = await initWC3Data();
+        const map = await wc3.loadMap(mapData, 'map.w3x');
+        ```
+        EOF
+
+    - name: Final verification
+      run: |
+        echo "Final build verification:"
+        ls -la build/deploy/
+        echo "Package ready for deployment"
+        
+        # Verificar que los archivos críticos existen
+        for file in wc3data.js wc3data.wasm wc3data-enhanced-api.js string-fix.js; do
+            if [ -f "build/deploy/$file" ]; then
+                echo "✓ $file - $(stat -c%s build/deploy/$file) bytes"
+            else
+                echo "✗ $file - MISSING"
+                exit 1
+            fi
+        done
