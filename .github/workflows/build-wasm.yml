@@ -530,14 +530,89 @@ jobs:
         };
         EOF
     
+    - name: Verify build output
+      run: |
+        echo "=== Verificando archivos generados ==="
+        ls -la build/
+        
+        if [ -f "build/wc3data.js" ]; then
+          echo "✓ wc3data.js generado"
+          echo "Tamaño: $(wc -c < build/wc3data.js) bytes"
+        else
+          echo "✗ wc3data.js no encontrado"
+        fi
+        
+        if [ -f "build/wc3data.wasm" ]; then
+          echo "✓ wc3data.wasm generado"
+          echo "Tamaño: $(wc -c < build/wc3data.wasm) bytes"
+        else
+          echo "✗ wc3data.wasm no encontrado"
+        fi
+        
+        if [ -f "build/wc3data-wrapper.js" ]; then
+          echo "✓ wc3data-wrapper.js generado"
+          echo "Tamaño: $(wc -c < build/wc3data-wrapper.js) bytes"
+        else
+          echo "✗ wc3data-wrapper.js no encontrado"
+        fi
+    
+    - name: Create release package
+      run: |
+        mkdir -p release
+        cp build/wc3data.js release/ 2>/dev/null || echo "wc3data.js no disponible"
+        cp build/wc3data.wasm release/ 2>/dev/null || echo "wc3data.wasm no disponible"
+        cp build/wc3data-wrapper.js release/ 2>/dev/null || echo "wc3data-wrapper.js no disponible"
+        
+        # Crear un archivo README para el release
+        cat > release/README.md << 'EOF'
+        # WC3Data WebAssembly Build
+        
+        Este paquete contiene los archivos compilados de wc3data para WebAssembly.
+        
+        ## Archivos incluidos:
+        - `wc3data.js` - Módulo principal WebAssembly
+        - `wc3data.wasm` - Archivo binario WebAssembly
+        - `wc3data-wrapper.js` - API JavaScript simplificada
+        
+        ## Uso básico:
+        ```html
+        <script src="wc3data.js"></script>
+        <script src="wc3data-wrapper.js"></script>
+        <script>
+          // Inicializar WC3Data
+          initWC3Data().then(() => {
+            console.log('WC3Data listo para usar');
+            // Usar window.wc3data.Map.* para las operaciones
+          });
+        </script>
+        ```
+        
+        ## API disponible:
+        - `wc3data.Map.load(arrayBuffer, filename)` - Cargar archivo de mapa
+        - `wc3data.Map.extract(mapFilename, internalFilename)` - Extraer archivo interno
+        - `wc3data.Map.getInfo(filename)` - Obtener información del mapa
+        - `wc3data.Map.list()` - Listar mapas cargados
+        - `wc3data.Map.clear()` - Limpiar memoria
+        EOF
+        
+        echo "Paquete de release creado en directorio 'release/'"
+        ls -la release/
+    
     - name: Upload artifacts
       uses: actions/upload-artifact@v3
       with:
         name: wc3data-wasm
         path: |
-          build/wc3data.js
-          build/wc3data.wasm
-          build/wc3data-wrapper.js
+          release/*
+    
+    - name: Upload build logs (on failure)
+      if: failure()
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-logs
+        path: |
+          build_log.txt
+          build/
     
     - name: Debug compilation errors
       if: failure()
@@ -555,7 +630,24 @@ jobs:
         echo -e "\nArchivos fuente encontrados:"
         find . -name "*.cpp" -o -name "*.c" | grep -v emsdk | head -10
         
+        echo -e "\nEstructura del directorio build:"
+        ls -la build/ || echo "Directorio build no existe"
+        
+        if [ -f "build_log.txt" ]; then
+          echo -e "\nÚltimas líneas del log de compilación:"
+          tail -50 build_log.txt
+        fi
+        
         if [ -f "DataGen/main.cpp" ]; then
           echo -e "\nIntentando compilación con verbose output:"
           emcc DataGen/main.cpp -I. -IDataGen -std=c++17 -v -c 2>&1 | head -50 || true
         fi
+        
+        echo -e "\nVerificando dependencias del sistema:"
+        which g++
+        which make
+        which cmake
+        
+        echo -e "\nInformación del sistema:"
+        uname -a
+        free -h
