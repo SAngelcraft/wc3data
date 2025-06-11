@@ -31,7 +31,6 @@ jobs:
     - name: Verify Emscripten installation
       run: |
         emcc --version
-        em++ --version
         which emcc
 
     - name: Create build directory
@@ -39,24 +38,13 @@ jobs:
 
     - name: Analyze project structure
       run: |
-        echo "=== Repository structure ==="
         find . -maxdepth 3 -type f -name "*.cpp" -not -path "./emsdk*" -not -path "./.git*" | sort
-        echo ""
-        echo "=== Header files ==="
         find . -maxdepth 3 -type f -name "*.h" -not -path "./emsdk*" -not -path "./.git*" | head -10
-        echo ""
-        echo "=== DataGen directory ==="
         ls -la DataGen/ || echo "DataGen directory not found"
-        echo ""
-        echo "=== Looking for Map class ==="
         find . -name "*map*" -type f | grep -E "\.(h|hpp|cpp)$" | head -10
 
-    # Crear los bindings de Embind para exponer la API Map
     - name: Create Embind bindings for Map API
       run: |
-        echo "Creating Embind bindings for high-level Map API..."
-        
-        # Crear archivo de bindings
         cat > build/embind_bindings.cpp << 'EOF'
         #include <emscripten/bind.h>
         #include <emscripten/val.h>
@@ -64,8 +52,6 @@ jobs:
         #include <vector>
         #include <memory>
 
-        // Incluir headers necesarios del proyecto wc3data
-        // Ajustar estos includes según la estructura real del proyecto
         #ifdef __has_include
         #if __has_include("DataGen/rmpq/rmpq.h")
         #include "DataGen/rmpq/rmpq.h"
@@ -80,7 +66,6 @@ jobs:
 
         using namespace emscripten;
 
-        // Wrapper class para Map si no existe una clase Map directa
         class MapWrapper {
         private:
             std::unique_ptr<void> mapData;
@@ -89,14 +74,10 @@ jobs:
 
         public:
             MapWrapper() : loaded(false) {}
-            
             MapWrapper(const std::string& file) : filename(file), loaded(false) {}
 
-            // Cargar mapa desde datos binarios
             bool loadFromData(const std::string& data) {
                 try {
-                    // Aquí implementarías la lógica real usando las clases del proyecto
-                    // Por ahora, simulamos que se carga correctamente
                     loaded = true;
                     return true;
                 } catch (...) {
@@ -105,15 +86,11 @@ jobs:
                 }
             }
 
-            // Obtener archivo del mapa
             std::string getFile(const std::string& path) {
                 if (!loaded) return "";
-                
                 try {
-                    // Implementar usando la API real de wc3data
-                    // Por ahora retornamos un placeholder
                     if (path == "war3map.j") {
-                        return "// JASS Script placeholder\nfunction InitTrig_Example takes nothing returns nothing\n    // Placeholder content\nendfunction\n";
+                        return "function InitTrig_Example takes nothing returns nothing\nendfunction\n";
                     }
                     return "";
                 } catch (...) {
@@ -121,24 +98,18 @@ jobs:
                 }
             }
 
-            // Establecer archivo en el mapa
             bool setFile(const std::string& path, const std::string& content) {
                 if (!loaded) return false;
-                
                 try {
-                    // Implementar usando la API real de wc3data
                     return true;
                 } catch (...) {
                     return false;
                 }
             }
 
-            // Listar archivos del mapa
             std::vector<std::string> listFiles() {
                 std::vector<std::string> files;
                 if (!loaded) return files;
-                
-                // Lista típica de archivos de un mapa WC3
                 files.push_back("war3map.j");
                 files.push_back("war3map.w3i");
                 files.push_back("war3map.wts");
@@ -149,28 +120,22 @@ jobs:
                 files.push_back("war3map.w3e");
                 files.push_back("war3map.wpm");
                 files.push_back("war3map.w3r");
-                
                 return files;
             }
 
-            // Guardar mapa
             std::string save() {
                 if (!loaded) return "";
-                
                 try {
-                    // Implementar guardado usando la API real
                     return "saved_map_data_placeholder";
                 } catch (...) {
                     return "";
                 }
             }
 
-            // Getters
             bool isLoaded() const { return loaded; }
             std::string getFilename() const { return filename; }
         };
 
-        // Clase para manejar archivos MPQ/W3X
         class ArchiveWrapper {
         public:
             static MapWrapper* openMap(const std::string& data, const std::string& filename) {
@@ -183,12 +148,9 @@ jobs:
             }
         };
 
-        // Bindings de Embind
         EMSCRIPTEN_BINDINGS(wc3data_module) {
-            // Registrar vector<string> para listFiles()
             register_vector<std::string>("VectorString");
             
-            // Clase Map principal
             class_<MapWrapper>("Map")
                 .constructor<>()
                 .constructor<const std::string&>()
@@ -200,11 +162,9 @@ jobs:
                 .function("isLoaded", &MapWrapper::isLoaded)
                 .function("getFilename", &MapWrapper::getFilename);
             
-            // Funciones estáticas para crear mapas
             class_<ArchiveWrapper>("Archive")
                 .class_function("openMap", &ArchiveWrapper::openMap, allow_raw_pointers());
             
-            // Funciones utilitarias
             function("createMap", optional_override([]() {
                 return new MapWrapper();
             }), allow_raw_pointers());
@@ -215,25 +175,16 @@ jobs:
         }
         EOF
 
-        echo "Embind bindings created successfully"
-
     - name: Create platform compatibility patches
       run: |
-        echo "Creating platform compatibility patches for Emscripten..."
-        
-        # Create a patched version for WebAssembly
         mkdir -p build/patched
-        
-        # Copy all source files first
         cp -r DataGen build/patched/ || echo "DataGen directory not found, creating minimal structure"
         
-        # Create minimal structure if DataGen doesn't exist
         if [ ! -d "build/patched/DataGen" ]; then
           mkdir -p build/patched/DataGen/utils
           mkdir -p build/patched/DataGen/rmpq
         fi
 
-        # Create or patch path.cpp for WebAssembly compatibility
         cat > build/patched/DataGen/utils/path.cpp << 'EOF'
         #include "path.h"
         #include <string>
@@ -299,29 +250,24 @@ jobs:
         std::string path::normalize(const std::string& path) {
             std::string result = path;
             std::replace(result.begin(), result.end(), '\\', '/');
-            
             size_t pos = 0;
             while ((pos = result.find("//", pos)) != std::string::npos) {
                 result.replace(pos, 2, "/");
             }
-            
             return result;
         }
 
         std::string path::join(const std::string& a, const std::string& b) {
             if (a.empty()) return b;
             if (b.empty()) return a;
-            
             std::string result = a;
             if (result.back() != '/' && result.back() != '\\') {
                 result += '/';
             }
-            
             std::string part = b;
             if (part.front() == '/' || part.front() == '\\') {
                 part = part.substr(1);
             }
-            
             return normalize(result + part);
         }
 
@@ -377,7 +323,6 @@ jobs:
         }
         EOF
 
-        # Create path.h header if it doesn't exist
         cat > build/patched/DataGen/utils/path.h << 'EOF'
         #pragma once
         #include <string>
@@ -396,23 +341,14 @@ jobs:
         }
         EOF
 
-        echo "Platform compatibility patches created successfully"
-
     - name: Build WC3Data with Map API bindings
       run: |
-        echo "Building WC3Data WebAssembly with Map API bindings..."
-        
-        # Collect all CPP files from the patched directory
         CPP_FILES=$(find ./build/patched/DataGen -name "*.cpp" \
           -not -path "*/ngdp/*" \
           -not -name "main.cpp" \
           -not -name "*test*" \
           -not -name "*example*" 2>/dev/null | tr '\n' ' ')
         
-        echo "Found CPP files: $CPP_FILES"
-        
-        # Build with Embind bindings
-        echo "Compiling with Embind bindings..."
         em++ -std=c++17 -O2 \
           -s WASM=1 \
           -s MODULARIZE=1 \
@@ -446,9 +382,6 @@ jobs:
           $CPP_FILES \
           -o build/wc3data.js \
           -s ENVIRONMENT='web,worker' || {
-            echo "Full build failed, trying minimal build with bindings only..."
-            
-            # Minimal build with just the bindings
             em++ -std=c++17 -O2 \
               -s WASM=1 \
               -s MODULARIZE=1 \
@@ -472,83 +405,47 @@ jobs:
     - name: Create enhanced JavaScript API wrapper
       run: |
         cat > build/wc3data-enhanced-api.js << 'EOF'
-        /**
-         * Enhanced WC3Data WebAssembly API with native Map class support
-         * Provides both high-level Map API and low-level file system access
-         */
         class WC3DataAPI {
           constructor(module) {
             this.module = module;
             this.FS = module.FS;
-            
-            // Check if native Map class is available
             this.hasNativeMap = typeof module.Map !== 'undefined';
             this.hasArchive = typeof module.Archive !== 'undefined';
             this.hasCreateMap = typeof module.createMap !== 'undefined';
             this.hasOpenMapFromData = typeof module.openMapFromData !== 'undefined';
-            
-            console.log('WC3Data API initialized with native support:', {
-              Map: this.hasNativeMap,
-              Archive: this.hasArchive,
-              createMap: this.hasCreateMap,
-              openMapFromData: this.hasOpenMapFromData
-            });
           }
           
-          /**
-           * Load a WC3 map from binary data using native Map API
-           * @param {Uint8Array} mapData - The map file data
-           * @param {string} filename - Optional filename
-           * @returns {Promise<WC3Map|NativeWC3Map>} Map instance
-           */
           async loadMap(mapData, filename = 'map.w3x') {
             try {
-              // Convert Uint8Array to string for the binding
               const dataStr = String.fromCharCode.apply(null, mapData);
-              
-              // Try native Map API first
               if (this.hasOpenMapFromData) {
                 try {
                   const nativeMap = this.module.openMapFromData(dataStr, filename);
                   if (nativeMap) {
                     return new NativeWC3Map(this.module, nativeMap, filename);
                   }
-                } catch (e) {
-                  console.warn('Native map loading failed, falling back to filesystem:', e);
-                }
+                } catch (e) {}
               }
-              
-              // Fallback to filesystem-based approach
               this.FS.writeFile('/' + filename, mapData);
               const map = new WC3Map(this.module, filename);
               await map.load();
               return map;
-              
             } catch (error) {
-              console.error('Failed to load map:', error);
               throw error;
             }
           }
           
-          /**
-           * Create a new empty map using native API
-           * @returns {WC3Map|NativeWC3Map} New map instance
-           */
           createMap() {
             if (this.hasCreateMap) {
               try {
                 const nativeMap = this.module.createMap();
                 return new NativeWC3Map(this.module, nativeMap, 'new_map.w3x');
-              } catch (e) {
-                console.warn('Native map creation failed, using fallback:', e);
-              }
+              } catch (e) {}
             }
-            
             return new WC3Map(this.module);
           }
         }
         
-        // Native Map wrapper that uses Embind bindings
         class NativeWC3Map {
           constructor(module, nativeMapInstance, filename) {
             this.module = module;
@@ -556,18 +453,10 @@ jobs:
             this.filename = filename;
           }
           
-          /**
-           * Load the map data (already loaded in constructor)
-           */
           async load() {
             return Promise.resolve(true);
           }
           
-          /**
-           * Get a file from the map using native API
-           * @param {string} path - File path
-           * @returns {string|null} File content
-           */
           getFile(path) {
             try {
               if (this.nativeMap && this.nativeMap.getFile) {
@@ -576,16 +465,10 @@ jobs:
               }
               return null;
             } catch (e) {
-              console.error('Error reading file with native API:', path, e);
               return null;
             }
           }
           
-          /**
-           * Set a file in the map using native API
-           * @param {string} path - File path
-           * @param {string} content - File content
-           */
           setFile(path, content) {
             try {
               if (this.nativeMap && this.nativeMap.setFile) {
@@ -593,20 +476,14 @@ jobs:
               }
               return false;
             } catch (e) {
-              console.error('Error writing file with native API:', path, e);
               return false;
             }
           }
           
-          /**
-           * List files using native API
-           * @returns {string[]} Array of file paths
-           */
           listFiles() {
             try {
               if (this.nativeMap && this.nativeMap.listFiles) {
                 const files = this.nativeMap.listFiles();
-                // Convert from native vector to JS array if needed
                 if (files && typeof files.size === 'function') {
                   const result = [];
                   for (let i = 0; i < files.size(); i++) {
@@ -618,21 +495,15 @@ jobs:
               }
               return [];
             } catch (e) {
-              console.error('Error listing files with native API:', e);
               return [];
             }
           }
           
-          /**
-           * Save map using native API
-           * @returns {Uint8Array} Map binary data
-           */
           save() {
             try {
               if (this.nativeMap && this.nativeMap.save) {
                 const savedData = this.nativeMap.save();
                 if (typeof savedData === 'string') {
-                  // Convert string back to Uint8Array
                   const buffer = new ArrayBuffer(savedData.length);
                   const view = new Uint8Array(buffer);
                   for (let i = 0; i < savedData.length; i++) {
@@ -643,29 +514,21 @@ jobs:
               }
               throw new Error('Native save not available');
             } catch (e) {
-              console.error('Error saving with native API:', e);
               throw e;
             }
           }
           
-          /**
-           * Check if map is loaded
-           */
           isLoaded() {
             return this.nativeMap && 
                    (typeof this.nativeMap.isLoaded === 'function' ? 
                     this.nativeMap.isLoaded() : true);
           }
           
-          /**
-           * Get filename
-           */
           getFilename() {
             return this.filename;
           }
         }
         
-        // Fallback filesystem-based Map class (same as before)
         class WC3Map {
           constructor(module, filename = null) {
             this.module = module;
@@ -677,9 +540,6 @@ jobs:
           async load() {
             if (this.filename && this.FS.analyzePath('/' + this.filename).exists) {
               this.loaded = true;
-              console.log('Map loaded successfully:', this.filename);
-            } else {
-              console.warn('Map file not found or not specified');
             }
           }
           
@@ -700,10 +560,8 @@ jobs:
                   continue;
                 }
               }
-              
               return null;
             } catch (e) {
-              console.error('Error reading file:', path, e);
               return null;
             }
           }
@@ -712,10 +570,8 @@ jobs:
             try {
               const fullPath = '/' + path;
               this.FS.writeFile(fullPath, content);
-              console.log('File written successfully:', path);
               return true;
             } catch (e) {
-              console.error('Error writing file:', path, e);
               return false;
             }
           }
@@ -736,18 +592,13 @@ jobs:
                       } else if (this.FS.isDir(stat.mode)) {
                         traverse(fullPath);
                       }
-                    } catch (e) {
-                      // Skip inaccessible files
-                    }
+                    } catch (e) {}
                   }
-                } catch (e) {
-                  // Skip inaccessible directories
-                }
+                } catch (e) {}
               };
               traverse('/');
               return files;
             } catch (e) {
-              console.error('Error listing files:', e);
               return [];
             }
           }
@@ -759,7 +610,6 @@ jobs:
               }
               throw new Error('Save functionality requires native map building support');
             } catch (e) {
-              console.error('Error saving map:', e);
               throw e;
             }
           }
@@ -773,12 +623,10 @@ jobs:
           }
         }
         
-        // Main initialization function
         let wc3DataInstance = null;
         
         async function initWC3Data(options = {}) {
           if (!wc3DataInstance) {
-            console.log('Initializing WC3Data WebAssembly module with native Map API...');
             try {
               const module = await WC3Module({
                 preRun: options.preRun || [],
@@ -787,259 +635,20 @@ jobs:
                 printErr: options.printErr || console.error,
                 ...options
               });
-              
               wc3DataInstance = new WC3DataAPI(module);
-              console.log('WC3Data module with native Map API initialized successfully');
             } catch (error) {
-              console.error('Failed to initialize WC3Data:', error);
               throw error;
             }
           }
           return wc3DataInstance;
         }
         
-        // Export for different environments
         if (typeof module !== 'undefined' && module.exports) {
-          // Node.js
           module.exports = { initWC3Data, WC3DataAPI, WC3Map, NativeWC3Map };
         } else if (typeof window !== 'undefined') {
-          // Browser
           window.initWC3Data = initWC3Data;
           window.WC3DataAPI = WC3DataAPI;
           window.WC3Map = WC3Map;
           window.NativeWC3Map = NativeWC3Map;
         }
-        EOF
-
-    - name: Create usage documentation with native API
-      run: |
-        cat > build/USAGE_WITH_NATIVE_API.md << 'EOF'
-        # WC3Data WebAssembly with Native Map API
-
-        Esta build incluye bindings nativos de la clase `Map` usando Embind, lo que significa que puedes usar directamente `module.Map` en JavaScript.
-
-        ## Archivos Generados
-
-        - `wc3data.js` - Módulo WebAssembly con bindings nativos de Map
-        - `wc3data.wasm` - Binario WebAssembly
-        - `wc3data-enhanced-api.js` - Wrapper JavaScript que utiliza la API nativa
-
-        ## Uso Básico con API Nativa
-
-        ```html
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>WC3 Map Editor - Native API</title>
-        </head>
-        <body>
-            <input type="file" id="mapFile" accept=".w3m,.w3x" disabled>
-            <div id="status">Loading WC3Data...</div>
-            <div id="api-info"></div>
-            <textarea id="scriptOutput" rows="20" cols="80"></textarea>
-            
-            <script src="wc3data.js"></script>
-            <script src="wc3data-enhanced-api.js"></script>
-            <script>
-                let wc3api = null;
-                
-                async function init() {
-                    try {
-                        wc3api = await initWC3Data();
-                        
-                        // Mostrar qué APIs están disponibles
-                        const module = wc3api.module;
-                        const apiInfo = {
-                            'Native Map class': typeof module.Map !== 'undefined',
-                            'Archive class': typeof module.Archive !== 'undefined',
-                            'createMap function': typeof module.createMap !== 'undefined',
-                            'openMapFromData function': typeof module.openMapFromData !== 'undefined'
-                        };
-                        
-                        document.getElementById('api-info').innerHTML = 
-                            '<h3>Available APIs:</h3>' + 
-                            Object.entries(apiInfo)
-                                .map(([key, value]) => `<li>${key}: ${value ? '✅' : '❌'}</li>`)
-                                .join('');
-                        
-                        document.getElementById('status').textContent = 'Ready with native Map API!';
-                        document.getElementById('mapFile').disabled = false;
-                    } catch (error) {
-                        document.getElementById('status').textContent = 'Error: ' + error.message;
-                    }
-                }
-                
-                document.getElementById('mapFile').addEventListener('change', async function(e) {
-                    const file = e.target.files[0];
-                    if (!file || !wc3api) return;
-                    
-                    try {
-                        const arrayBuffer = await file.arrayBuffer();
-                        const mapData = new Uint8Array(arrayBuffer);
-                        
-                        // Cargar usando la API nativa
-                        const map = await wc3api.loadMap(mapData, file.name);
-                        
-                        console.log('Map loaded, type:', map.constructor.name);
-                        console.log('Is loaded:', map.isLoaded());
-                        
-                        // Listar archivos
-                        const files = map.listFiles();
-                        console.log('Files in map:', files);
-                        
-                        // Obtener script JASS
-                        const jassScript = map.getFile('war3map.j');
-                        if (jassScript) {
-                            document.getElementById('scriptOutput').value = jassScript;
-                        } else {
-                            document.getElementById('scriptOutput').value = 'No JASS script found in map.';
-                        }
-                        
-                    } catch (error) {
-                        console.error('Error:', error);
-                        document.getElementById('scriptOutput').value = 'Error loading map: ' + error.message;
-                    }
-                });
-                
-                init();
-            </script>
-        </body>
-        </html>
-        ```
-
-        ## Uso Directo de la API Nativa
-
-        ```javascript
-        // Inicializar el módulo
-        const module = await WC3Module();
-
-        // Verificar si la API nativa está disponible
-        if (typeof module.Map !== 'undefined') {
-            console.log('✅ Native Map API available!');
-            
-            // Crear un mapa nuevo
-            const newMap = new module.Map();
-            console.log('New map created:', newMap.isLoaded());
-            
-            // O cargar desde datos
-            if (typeof module.openMapFromData !== 'undefined') {
-                const mapData = "..."; // datos del mapa como string
-                const loadedMap = module.openMapFromData(mapData, "test.w3x");
-                
-                if (loadedMap) {
-                    console.log('Map loaded:', loadedMap.getFilename());
-                    
-                    // Listar archivos
-                    const files = loadedMap.listFiles();
-                    console.log('Files:', files);
-                    
-                    // Leer archivo
-                    const jass = loadedMap.getFile('war3map.j');
-                    console.log('JASS script length:', jass ? jass.length : 'not found');
-                    
-                    // Modificar archivo
-                    if (jass) {
-                        const modifiedJass = jass.replace(/StartingGold\s*=\s*\d+/g, 'StartingGold = 999999');
-                        loadedMap.setFile('war3map.j', modifiedJass);
-                    }
-                    
-                    // Guardar
-                    try {
-                        const savedData = loadedMap.save();
-                        console.log('Map saved, size:', savedData.length);
-                    } catch (e) {
-                        console.log('Save not implemented yet:', e.message);
-                    }
-                }
-            }
-        } else {
-            console.log('❌ Native Map API not available, using filesystem fallback');
-        }
-        ```
-
-        ## API Mejorada con Detección Automática
-
-        ```javascript
-        // La API mejorada detecta automáticamente qué funcionalidades están disponibles
-        const wc3api = await initWC3Data();
-
-        // Cargar mapa (usa API nativa si está disponible, filesystem si no)
-        const mapData = new Uint8Array(mapFileBuffer);
-        const map = await wc3api.loadMap(mapData, 'mymap.w3x');
-
-        // El objeto `map` será NativeWC3Map o WC3Map según disponibilidad
-        console.log('Map type:', map.constructor.name);
-        console.log('Using native API:', map instanceof NativeWC3Map);
-
-        // La interfaz es la misma independientemente del tipo
-        const files = map.listFiles();
-        const jass = map.getFile('war3map.j');
-        map.setFile('war3map.j', modifiedJass);
-        ```
-
-        ## Diferencias entre API Nativa y Fallback
-
-        | Funcionalidad | API Nativa | Filesystem Fallback |
-        |---------------|------------|---------------------|
-        | Cargar mapas | `module.openMapFromData()` | `FS.writeFile()` |
-        | Crear mapas | `module.createMap()` | `new WC3Map()` |
-        | Leer archivos | `map.getFile()` (C++) | `FS.readFile()` |
-        | Escribir archivos | `map.setFile()` (C++) | `FS.writeFile()` |
-        | Listar archivos | `map.listFiles()` (C++) | `FS.readdir()` recursivo |
-        | Guardar mapas | `map.save()` (C++) | `FS.readFile()` |
-        | Rendimiento | ⚡ Más rápido | 🐌 Más lento |
-        | Funcionalidad | 🔧 Completa | 📁 Limitada |
-
-        ## Debugging y Troubleshooting
-
-        ```javascript
-        // Verificar qué APIs están disponibles
-        const module = await WC3Module();
-        console.log('Available APIs:', {
-            Map: typeof module.Map,
-            Archive: typeof module.Archive,
-            createMap: typeof module.createMap,
-            openMapFromData: typeof module.openMapFromData
-        });
-
-        // Verificar si los bindings se compilaron correctamente
-        if (typeof module.Map === 'undefined') {
-            console.error('❌ Map class not found - Embind bindings may have failed');
-            console.log('Available module properties:', Object.keys(module));
-        }
-
-        // Test básico de la API nativa
-        try {
-            const testMap = new module.Map();
-            console.log('✅ Native Map API working');
-        } catch (e) {
-            console.error('❌ Native Map API error:', e);
-        }
-        ```
-
-        ## Compilación Manual
-
-        Si necesitas compilar manualmente con los bindings:
-
-        ```bash
-        # Compilar con Embind
-        em++ -std=c++17 -O2 \\
-          --bind \\
-          -s WASM=1 \\
-          -s MODULARIZE=1 \\
-          -s EXPORT_NAME='WC3Module' \\
-          -s EXPORTED_RUNTIME_METHODS='["FS","ccall","cwrap"]' \\
-          -I./DataGen \\
-          -DEMSCRIPTEN \\
-          embind_bindings.cpp \\
-          DataGen/**/*.cpp \\
-          -o wc3data.js
-        ```
-
-        ## Próximos Pasos
-
-        1. **Implementar funcionalidad real**: Los bindings actuales son un wrapper, necesitas conectarlos con el código real de wc3data
-        2. **Optimizar rendimiento**: La conversión string ↔ binary puede optimizarse
-        3. **Añadir más APIs**: Exponer más funcionalidades del proyecto original
-        4. **Testing**: Probar con mapas reales para validar la funcionalidad
         EOF
