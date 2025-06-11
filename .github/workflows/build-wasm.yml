@@ -441,25 +441,23 @@ endfunction`;
         echo "Main build failed, attempting simplified build..."
         
         # Create minimal fallback
-        cat > minimal.cpp << 'EOF'
-        #include <emscripten/emscripten.h>
-        #include <emscripten/bind.h>
-        #include <cstdlib>
-        
-        extern "C" {
-          EMSCRIPTEN_KEEPALIVE
-          void* simple_alloc(size_t size) { return malloc(size); }
-          
-          EMSCRIPTEN_KEEPALIVE  
-          void simple_free(void* ptr) { if(ptr) free(ptr); }
-        }
-        
-        using namespace emscripten;
-        EMSCRIPTEN_BINDINGS(minimal) {
-          function("simple_alloc", &simple_alloc, allow_raw_pointers());
-          function("simple_free", &simple_free, allow_raw_pointers());
-        }
-        EOF
+        echo '#include <emscripten/emscripten.h>' > minimal.cpp
+        echo '#include <emscripten/bind.h>' >> minimal.cpp
+        echo '#include <cstdlib>' >> minimal.cpp
+        echo '' >> minimal.cpp
+        echo 'extern "C" {' >> minimal.cpp
+        echo '  EMSCRIPTEN_KEEPALIVE' >> minimal.cpp
+        echo '  void* simple_alloc(size_t size) { return malloc(size); }' >> minimal.cpp
+        echo '' >> minimal.cpp
+        echo '  EMSCRIPTEN_KEEPALIVE' >> minimal.cpp
+        echo '  void simple_free(void* ptr) { if(ptr) free(ptr); }' >> minimal.cpp
+        echo '}' >> minimal.cpp
+        echo '' >> minimal.cpp
+        echo 'using namespace emscripten;' >> minimal.cpp
+        echo 'EMSCRIPTEN_BINDINGS(minimal) {' >> minimal.cpp
+        echo '  function("simple_alloc", &simple_alloc, allow_raw_pointers());' >> minimal.cpp
+        echo '  function("simple_free", &simple_free, allow_raw_pointers());' >> minimal.cpp
+        echo '}' >> minimal.cpp
         
         # Simplified build
         em++ -O2 -s WASM=1 -s MODULARIZE=1 \
@@ -477,23 +475,21 @@ endfunction`;
         # Verify files exist and have content
         if [ ! -f wc3data.js ] || [ ! -s wc3data.js ]; then
           echo "Creating emergency fallback..."
-          cat > wc3data.js << 'EOF'
-        function WC3Module() {
-          return Promise.resolve({
-            _malloc: function(size) { return 0; },
-            _free: function(ptr) { },
-            Map: {
-              load: function(buffer) {
-                return Promise.reject(new Error('WASM module failed to build'));
-              }
-            }
-          });
-        }
-        
-        if (typeof module !== 'undefined' && module.exports) {
-          module.exports = WC3Module;
-        }
-        EOF
+          echo 'function WC3Module() {' > wc3data.js
+          echo '  return Promise.resolve({' >> wc3data.js
+          echo '    _malloc: function(size) { return 0; },' >> wc3data.js
+          echo '    _free: function(ptr) { },' >> wc3data.js
+          echo '    Map: {' >> wc3data.js
+          echo '      load: function(buffer) {' >> wc3data.js
+          echo '        return Promise.reject(new Error("WASM module failed to build"));' >> wc3data.js
+          echo '      }' >> wc3data.js
+          echo '    }' >> wc3data.js
+          echo '  });' >> wc3data.js
+          echo '}' >> wc3data.js
+          echo '' >> wc3data.js
+          echo 'if (typeof module !== "undefined" && module.exports) {' >> wc3data.js
+          echo '  module.exports = WC3Module;' >> wc3data.js
+          echo '}' >> wc3data.js
         fi
         
         if [ ! -f wc3data.wasm ]; then
