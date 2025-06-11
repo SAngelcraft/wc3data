@@ -112,7 +112,7 @@ jobs:
             -s ENVIRONMENT='web'
         else
           echo "No DataGen/main.cpp found, creating minimal stub..."
-          cat > build_stub.cpp << 'EOF'
+          cat > build_stub.cpp << 'STUBEOF'
 #include <emscripten/bind.h>
 #include <string>
 
@@ -133,7 +133,7 @@ EMSCRIPTEN_BINDINGS(wc3data) {
         .function("setFile", &WC3Map::setFile)
         .function("save", &WC3Map::save);
 }
-EOF
+STUBEOF
           
           em++ -std=c++17 -O1 \
             -s WASM=1 \
