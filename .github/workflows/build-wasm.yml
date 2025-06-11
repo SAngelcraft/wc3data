@@ -8,646 +8,186 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-wasm:
+  build:
     runs-on: ubuntu-latest
     
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
       with:
-        submodules: recursive
-    
-    - name: Setup Node.js
-      uses: actions/setup-node@v4
+        submodules: 'recursive'
+
+    - name: Setup Emscripten
+      uses: mymindstorm/setup-emsdk@v14
       with:
-        node-version: '18'
-    
-    - name: Install system dependencies
+        version: 'latest'
+        actions-cache-folder: 'emsdk-cache'
+
+    - name: Verify Emscripten installation
       run: |
-        sudo apt-get update
-        sudo apt-get install -y build-essential cmake python3 python3-pip
-    
-    - name: Cache Emscripten
-      id: cache-emsdk
-      uses: actions/cache@v3
-      with:
-        path: emsdk
-        key: emsdk-${{ runner.os }}-3.1.50
-    
-    - name: Setup Emscripten SDK
-      if: steps.cache-emsdk.outputs.cache-hit != 'true'
-      run: |
-        git clone https://github.com/emscripten-core/emsdk.git
-        cd emsdk
-        ./emsdk install 3.1.50
-        ./emsdk activate 3.1.50
-    
-    - name: Activate Emscripten SDK
-      run: |
-        cd emsdk
-        source ./emsdk_env.sh
-        echo "EMSDK=$(pwd)" >> $GITHUB_ENV
-        echo "$(pwd)" >> $GITHUB_PATH
-        echo "$(pwd)/upstream/emscripten" >> $GITHUB_PATH
-    
-    - name: Verify Emscripten Installation
-      run: |
-        source emsdk/emsdk_env.sh
         emcc --version
-        which emcc
-        echo "Emscripten setup complete"
-    
-    - name: Analyze project structure
-      run: |
-        echo "=== Project Structure ==="
-        find . -type f -name "*.cpp" -o -name "*.c" -o -name "*.hpp" -o -name "*.h" | head -20
-        echo ""
-        echo "=== Main directories ==="
-        ls -la
-        echo ""
-        if [ -d "DataGen" ]; then
-          echo "=== DataGen directory ==="
-          ls -la DataGen/
-        fi
-        if [ -d "src" ]; then
-          echo "=== src directory ==="
-          ls -la src/
-        fi
-    
-    - name: Check for compilation errors in source
-      run: |
-        source emsdk/emsdk_env.sh
-        
-        echo "=== Testing compilation of individual files ==="
-        
-        MAIN_FILE=""
-        if [ -f "DataGen/main.cpp" ]; then
-            MAIN_FILE="DataGen/main.cpp"
-            echo "Found main file: $MAIN_FILE"
-        elif [ -f "main.cpp" ]; then
-            MAIN_FILE="main.cpp"
-            echo "Found main file: $MAIN_FILE"
-        else
-            echo "No main.cpp found, looking for other entry points..."
-            find . -name "*.cpp" -exec grep -l "int main" {} \; | head -1
-        fi
-        
-        if [ -n "$MAIN_FILE" ]; then
-          echo "Testing basic syntax compilation..."
-          
-          echo "Checking with system g++..."
-          g++ -fsyntax-only "$MAIN_FILE" -I. -IDataGen -Isrc -std=c++17 2>&1 | head -20 || true
-          
-          echo "Testing with emcc..."
-          emcc "$MAIN_FILE" -I. -IDataGen -Isrc -std=c++17 -fsyntax-only 2>&1 | head -20 || {
-            echo "=== Compilation failed, showing file content ==="
-            echo "First 30 lines of $MAIN_FILE:"
-            head -30 "$MAIN_FILE"
-            echo "=== Checking for common issues ==="
-            grep -n "#include" "$MAIN_FILE" | head -10
-          }
-        fi
-    
+        em++ --version
+
     - name: Create build directory
       run: mkdir -p build
-    
-    - name: Compile with better error handling
-      id: improved_build
-      continue-on-error: true
+
+    - name: Build wc3data with Emscripten
       run: |
-        source emsdk/emsdk_env.sh
-        
-        echo "=== Improved compilation approach ==="
-        
-        MAIN_FILE=""
-        SOURCES=""
-        
-        for candidate in "DataGen/main.cpp" "main.cpp" "src/main.cpp"; do
-          if [ -f "$candidate" ]; then
-            MAIN_FILE="$candidate"
-            break
-          fi
-        done
-        
-        if [ -z "$MAIN_FILE" ]; then
-          echo "No se encontró archivo main, buscando alternativas..."
-          MAIN_FILE=$(find . -name "*.cpp" -exec grep -l "int main" {} \; | head -1)
-        fi
-        
-        if [ -z "$MAIN_FILE" ]; then
-          echo "Error: No se puede encontrar punto de entrada"
-          exit 1
-        fi
-        
-        echo "Archivo principal: $MAIN_FILE"
-        SOURCES="$MAIN_FILE"
-        
-        for dir in "DataGen" "src" "."; do
-          if [ -d "$dir" ]; then
-            for file in $(find "$dir" -maxdepth 2 -name "*.cpp" -not -name "$(basename $MAIN_FILE)" 2>/dev/null); do
-              if ! grep -q "int[[:space:]]*main[[:space:]]*(" "$file" 2>/dev/null; then
-                if [[ "$file" != *test* ]] && [[ "$file" != *Test* ]] && [[ "$file" != *example* ]]; then
-                  SOURCES="$SOURCES $file"
-                fi
-              fi
-            done
-          fi
-        done
-        
-        echo "Archivos a compilar: $SOURCES"
-        
-        emcc $SOURCES \
-          -I. \
-          -IDataGen \
-          -Isrc \
-          -std=c++17 \
-          -O1 \
+        # Compilar la librería completa con todas las funcionalidades
+        em++ -std=c++17 -O2 \
           -s WASM=1 \
           -s MODULARIZE=1 \
           -s EXPORT_NAME='WC3Module' \
-          -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap","getValue","setValue","UTF8ToString","stringToUTF8","FS"]' \
+          -s EXPORTED_RUNTIME_METHODS='["FS","PROXYFS","NODEFS","IDBFS","ccall","cwrap","getValue","setValue","UTF8ToString","stringToUTF8","lengthBytesUTF8"]' \
           -s EXPORTED_FUNCTIONS='["_malloc","_free"]' \
           -s ALLOW_MEMORY_GROWTH=1 \
-          -s INITIAL_MEMORY=33554432 \
-          -s USE_ZLIB=1 \
+          -s MAXIMUM_MEMORY=536870912 \
+          -s STACK_SIZE=5242880 \
           -s FILESYSTEM=1 \
-          -s ENVIRONMENT='web' \
+          -s FORCE_FILESYSTEM=1 \
           -s ASSERTIONS=0 \
-          -s DISABLE_EXCEPTION_CATCHING=1 \
-          -s ERROR_ON_UNDEFINED_SYMBOLS=0 \
-          -s IGNORE_MISSING_MAIN=0 \
-          -s STANDALONE_WASM=0 \
-          -Wno-unused-command-line-argument \
-          -Wno-unused-function \
+          -s DISABLE_EXCEPTION_CATCHING=0 \
+          -s EXCEPTION_CATCHING_ALLOWED='[..]' \
           --bind \
-          -o build/wc3data.js 2>&1 | tee build_log.txt
-    
-    - name: Minimal compilation approach (fallback)
-      if: steps.improved_build.outcome == 'failure'
-      id: minimal_build
-      continue-on-error: true
+          --preload-file src@/ \
+          -I. -Isrc -IDataGen \
+          -DEMSCRIPTEN \
+          -DUSE_EMSCRIPTEN \
+          src/*.cpp \
+          DataGen/*.cpp \
+          -o build/wc3data.js \
+          --exclude-file="*/test*" \
+          --exclude-file="*/example*" \
+          -s ENVIRONMENT='web'
+
+    - name: Build alternative version (if main build fails)
+      if: failure()
       run: |
-        source emsdk/emsdk_env.sh
-        
-        echo "=== Enfoque de compilación mínima ==="
-        echo "Compilación mejorada falló, mostrando log:"
-        if [ -f "build_log.txt" ]; then
-          echo "Últimas líneas del log de compilación:"
-          tail -30 build_log.txt
-        fi
-        
-        MAIN_FILE=""
-        if [ -f "DataGen/main.cpp" ]; then
-            MAIN_FILE="DataGen/main.cpp"
-        elif [ -f "main.cpp" ]; then
-            MAIN_FILE="main.cpp"
-        else
-            echo "No se puede encontrar archivo principal"
-            exit 1
-        fi
-        
-        echo "Compilando solo archivo principal: $MAIN_FILE"
-        
-        emcc "$MAIN_FILE" \
-          -I. \
-          -IDataGen \
-          -std=c++17 \
-          -O0 \
+        # Versión alternativa con configuración más conservadora
+        em++ -std=c++17 -O1 \
           -s WASM=1 \
           -s MODULARIZE=1 \
           -s EXPORT_NAME='WC3Module' \
+          -s EXPORTED_RUNTIME_METHODS='["FS","ccall","cwrap","UTF8ToString","stringToUTF8"]' \
           -s ALLOW_MEMORY_GROWTH=1 \
-          -s IGNORE_MISSING_MAIN=1 \
-          -s ERROR_ON_UNDEFINED_SYMBOLS=0 \
-          -s DISABLE_EXCEPTION_CATCHING=1 \
-          -s ASSERTIONS=0 \
-          -Wno-everything \
-          -o build/wc3data.js
-    
-    - name: Create stub WebAssembly module (emergency fallback)
-      if: steps.improved_build.outcome == 'failure' && steps.minimal_build.outcome == 'failure'
-      run: |
-        source emsdk/emsdk_env.sh
-        
-        echo "=== Creando módulo stub de emergencia ==="
-        echo "Ambas compilaciones fallaron, logs disponibles:"
-        ls -la build/ || true
-        
-        cat > build/stub.cpp << 'EOF'
-        #include <emscripten/bind.h>
-        #include <string>
-        #include <vector>
-        
-        std::string processMapFile(const std::string& data) {
-            return "Stub implementation - wc3data compilation failed";
-        }
-        
-        std::vector<std::string> listMapFiles() {
-            return {"war3map.j", "war3map.w3i", "war3map.wts"};
-        }
-        
-        std::string extractFile(const std::string& mapData, const std::string& filename) {
-            return "File extraction not available - stub implementation";
-        }
-        
-        EMSCRIPTEN_BINDINGS(wc3data_stub) {
-            emscripten::function("processMapFile", &processMapFile);
-            emscripten::function("listMapFiles", &listMapFiles);
-            emscripten::function("extractFile", &extractFile);
-            
-            emscripten::register_vector<std::string>("VectorString");
-        }
-        EOF
-        
-        emcc build/stub.cpp \
-          -std=c++17 \
-          -O2 \
-          -s WASM=1 \
-          -s MODULARIZE=1 \
-          -s EXPORT_NAME='WC3Module' \
-          -s EXPORTED_RUNTIME_METHODS='["ccall","cwrap"]' \
-          -s ALLOW_MEMORY_GROWTH=1 \
+          -s FILESYSTEM=1 \
           --bind \
-          -o build/wc3data.js
-        
-        echo "Módulo stub creado exitosamente"
-    
-    - name: Create JavaScript wrapper
+          -I. -Isrc \
+          -DEMSCRIPTEN \
+          $(find src -name "*.cpp" -not -path "*/test*" -not -path "*/example*") \
+          -o build/wc3data.js \
+          -s ENVIRONMENT='web'
+
+    - name: Create wrapper for easy usage
       run: |
         cat > build/wc3data-wrapper.js << 'EOF'
-        class WC3DataWrapper {
-          constructor(module) {
-            this.module = module;
-            this.initialized = false;
-            this.mapFiles = new Map();
+        // Wrapper para facilitar el uso de wc3data
+        let WC3DataModule = null;
+        
+        async function initWC3Data() {
+          if (!WC3DataModule) {
+            WC3DataModule = await WC3Module();
           }
-          
-          async initialize() {
-            if (this.initialized) return true;
-            
-            try {
-              if (this.module.FS) {
-                try {
-                  this.module.FS.mkdir('/maps');
-                  this.module.FS.mkdir('/temp');
-                } catch (e) {
-                  console.log('Directorios virtuales ya existen o no se pueden crear');
-                }
-              }
-              
-              console.log('Funciones disponibles en el módulo:', Object.keys(this.module).filter(k => typeof this.module[k] === 'function'));
-              
-              this.initialized = true;
-              return true;
-            } catch (error) {
-              console.error('Error en inicialización:', error);
-              this.initialized = false;
-              return false;
-            }
-          }
-          
-          loadMapFile(arrayBuffer, filename) {
-            if (!this.initialized) {
-              throw new Error('WC3Data no está inicializado. Llama a initialize() primero.');
-            }
-            
-            try {
-              const uint8Array = new Uint8Array(arrayBuffer);
-              
-              this.mapFiles.set(filename, uint8Array);
-              
-              if (this.module.FS) {
-                try {
-                  this.module.FS.writeFile('/maps/' + filename, uint8Array);
-                } catch (e) {
-                  console.warn('No se pudo escribir en FS virtual:', e.message);
-                }
-              }
-              
-              let processResult = null;
-              if (this.module.processMapFile) {
-                try {
-                  const dataStr = Array.from(uint8Array).map(b => String.fromCharCode(b)).join('');
-                  processResult = this.module.processMapFile(dataStr);
-                } catch (e) {
-                  console.warn('Procesamiento nativo falló:', e.message);
-                }
-              }
-              
-              return {
-                success: true,
-                filename: filename,
-                size: uint8Array.length,
-                processResult: processResult,
-                message: 'Archivo cargado en memoria'
-              };
-              
-            } catch (error) {
-              return {
-                success: false,
-                error: error.message
-              };
-            }
-          }
-          
-          extractFile(mapFilename, internalFilename) {
-            if (!this.initialized) {
-              throw new Error('WC3Data no está inicializado.');
-            }
-            
-            try {
-              if (!this.mapFiles.has(mapFilename)) {
-                return {
-                  success: false,
-                  error: 'Mapa no encontrado. Carga el archivo primero.'
-                };
-              }
-              
-              const mapData = this.mapFiles.get(mapFilename);
-              
-              if (this.module.extractFile) {
-                try {
-                  const dataStr = Array.from(mapData).map(b => String.fromCharCode(b)).join('');
-                  const result = this.module.extractFile(dataStr, internalFilename);
-                  
-                  return {
-                    success: true,
-                    filename: internalFilename,
-                    data: result,
-                    source: 'native_extraction'
-                  };
-                } catch (e) {
-                  console.warn('Extracción nativa falló:', e.message);
-                }
-              }
-              
-              return this.basicMPQAnalysis(mapData, internalFilename);
-              
-            } catch (error) {
-              return {
-                success: false,
-                error: error.message
-              };
-            }
-          }
-          
-          basicMPQAnalysis(data, targetFile) {
-            try {
-              const mpqSignature = new Uint8Array([0x4D, 0x50, 0x51, 0x1A]);
-              let mpqOffset = -1;
-              
-              for (let i = 0; i <= data.length - 4; i++) {
-                if (data[i] === mpqSignature[0] && 
-                    data[i+1] === mpqSignature[1] && 
-                    data[i+2] === mpqSignature[2] && 
-                    data[i+3] === mpqSignature[3]) {
-                  mpqOffset = i;
-                  break;
-                }
-              }
-              
-              if (mpqOffset === -1) {
-                return {
-                  success: false,
-                  error: 'No se encontró firma MPQ en el archivo'
-                };
-              }
-              
-              return {
-                success: true,
-                filename: targetFile,
-                data: `Archivo MPQ encontrado en offset ${mpqOffset}. Extracción completa requiere implementación nativa.`,
-                info: {
-                  mpqOffset: mpqOffset,
-                  fileSize: data.length,
-                  message: 'Análisis básico completado. Para extracción completa se requiere compilación exitosa de wc3data.'
-                }
-              };
-              
-            } catch (error) {
-              return {
-                success: false,
-                error: 'Error en análisis básico: ' + error.message
-              };
-            }
-          }
-          
-          getMapInfo(filename) {
-            if (!this.initialized) {
-              throw new Error('WC3Data no está inicializado.');
-            }
-            
-            try {
-              const mapData = this.mapFiles.get(filename);
-              if (!mapData) {
-                return {
-                  success: false,
-                  error: 'Mapa no encontrado'
-                };
-              }
-              
-              const info = {
-                filename: filename,
-                size: mapData.length,
-                type: filename.endsWith('.w3x') ? 'Expansion Map' : 'Classic Map',
-                loaded: true
-              };
-              
-              if (this.module.listMapFiles) {
-                try {
-                  const fileList = this.module.listMapFiles();
-                  info.expectedFiles = fileList;
-                } catch (e) {
-                  console.warn('No se pudo obtener lista de archivos:', e.message);
-                }
-              }
-              
-              return {
-                success: true,
-                info: info
-              };
-              
-            } catch (error) {
-              return {
-                success: false,
-                error: error.message
-              };
-            }
-          }
-          
-          getLoadedMaps() {
-            return Array.from(this.mapFiles.keys());
-          }
-          
-          clearMaps() {
-            this.mapFiles.clear();
-            return { success: true, message: 'Memoria limpiada' };
-          }
+          return WC3DataModule;
         }
         
-        window.initWC3Data = async function() {
-          try {
-            console.log('Iniciando carga de WC3Data...');
-            const module = await WC3Module();
-            console.log('Módulo WC3 cargado');
-            
-            const wrapper = new WC3DataWrapper(module);
-            const initSuccess = await wrapper.initialize();
-            
-            if (!initSuccess) {
-              console.warn('Inicialización con advertencias');
-            }
-            
-            window.wc3data = {
-              Map: {
-                load: wrapper.loadMapFile.bind(wrapper),
-                extract: wrapper.extractFile.bind(wrapper),
-                getInfo: wrapper.getMapInfo.bind(wrapper),
-                list: wrapper.getLoadedMaps.bind(wrapper),
-                clear: wrapper.clearMaps.bind(wrapper)
-              },
-              _wrapper: wrapper
-            };
-            
-            console.log('WC3Data API disponible globalmente');
-            return wrapper;
-            
-          } catch (error) {
-            console.error('Error inicializando WC3Data:', error);
-            
-            window.wc3data = {
-              Map: {
-                load: () => ({ success: false, error: 'WC3Data no pudo cargarse' }),
-                extract: () => ({ success: false, error: 'WC3Data no pudo cargarse' }),
-                getInfo: () => ({ success: false, error: 'WC3Data no pudo cargarse' }),
-                list: () => [],
-                clear: () => ({ success: false, error: 'WC3Data no pudo cargarse' })
-              }
-            };
-            
-            throw error;
-          }
-        };
+        // Exportar para uso en browser y Node.js
+        if (typeof module !== 'undefined' && module.exports) {
+          module.exports = { initWC3Data, WC3Module };
+        } else if (typeof window !== 'undefined') {
+          window.initWC3Data = initWC3Data;
+        }
         EOF
-    
-    - name: Verify build output
+
+    - name: List generated files
       run: |
-        echo "=== Verificando archivos generados ==="
+        echo "Generated files:"
         ls -la build/
-        
-        if [ -f "build/wc3data.js" ]; then
-          echo "✓ wc3data.js generado"
-          echo "Tamaño: $(wc -c < build/wc3data.js) bytes"
-        else
-          echo "✗ wc3data.js no encontrado"
-        fi
-        
-        if [ -f "build/wc3data.wasm" ]; then
-          echo "✓ wc3data.wasm generado"
-          echo "Tamaño: $(wc -c < build/wc3data.wasm) bytes"
-        else
-          echo "✗ wc3data.wasm no encontrado"
-        fi
-        
-        if [ -f "build/wc3data-wrapper.js" ]; then
-          echo "✓ wc3data-wrapper.js generado"
-          echo "Tamaño: $(wc -c < build/wc3data-wrapper.js) bytes"
-        else
-          echo "✗ wc3data-wrapper.js no encontrado"
-        fi
-    
-    - name: Create release package
+        echo "File sizes:"
+        du -h build/*
+
+    - name: Create usage instructions
       run: |
-        mkdir -p release
-        cp build/wc3data.js release/ 2>/dev/null || echo "wc3data.js no disponible"
-        cp build/wc3data.wasm release/ 2>/dev/null || echo "wc3data.wasm no disponible"
-        cp build/wc3data-wrapper.js release/ 2>/dev/null || echo "wc3data-wrapper.js no disponible"
+        cat > build/README.md << 'EOF'
+        # wc3data WebAssembly Build
         
-        # Crear un archivo README para el release
-        cat > release/README.md << 'EOF'
-        # WC3Data WebAssembly Build
+        ## Archivos generados:
+        - `wc3data.js`: Código JavaScript principal
+        - `wc3data.wasm`: Módulo WebAssembly compilado
+        - `wc3data.data`: Archivos de datos (si están presentes)
+        - `wc3data-wrapper.js`: Wrapper para facilitar el uso
         
-        Este paquete contiene los archivos compilados de wc3data para WebAssembly.
+        ## Uso en HTML:
         
-        ## Archivos incluidos:
-        - `wc3data.js` - Módulo principal WebAssembly
-        - `wc3data.wasm` - Archivo binario WebAssembly
-        - `wc3data-wrapper.js` - API JavaScript simplificada
-        
-        ## Uso básico:
         ```html
-        <script src="wc3data.js"></script>
-        <script src="wc3data-wrapper.js"></script>
-        <script>
-          // Inicializar WC3Data
-          initWC3Data().then(() => {
-            console.log('WC3Data listo para usar');
-            // Usar window.wc3data.Map.* para las operaciones
-          });
-        </script>
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>WC3 Data Example</title>
+        </head>
+        <body>
+            <script src="wc3data.js"></script>
+            <script src="wc3data-wrapper.js"></script>
+            <script>
+                async function main() {
+                    try {
+                        const module = await initWC3Data();
+                        console.log('WC3Data module loaded successfully');
+                        
+                        // Usar la API aquí
+                        // Ejemplo: const map = new module.Map();
+                        
+                    } catch (error) {
+                        console.error('Error loading WC3Data:', error);
+                    }
+                }
+                
+                main();
+            </script>
+        </body>
+        </html>
         ```
         
-        ## API disponible:
-        - `wc3data.Map.load(arrayBuffer, filename)` - Cargar archivo de mapa
-        - `wc3data.Map.extract(mapFilename, internalFilename)` - Extraer archivo interno
-        - `wc3data.Map.getInfo(filename)` - Obtener información del mapa
-        - `wc3data.Map.list()` - Listar mapas cargados
-        - `wc3data.Map.clear()` - Limpiar memoria
-        EOF
+        ## Uso programático:
         
-        echo "Paquete de release creado en directorio 'release/'"
-        ls -la release/
-    
-    - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+        ```javascript
+        // Inicializar el módulo
+        const module = await initWC3Data();
+        
+        // Cargar un mapa (ejemplo)
+        const mapData = new Uint8Array(mapFileBuffer);
+        const map = new module.Map();
+        map.load(mapData);
+        
+        // Extraer archivos
+        const war3mapJ = map.getFile('war3map.j');
+        
+        // Modificar archivos
+        map.setFile('war3map.j', newScriptData);
+        
+        // Guardar mapa modificado
+        const modifiedMapBuffer = map.save();
+        ```
+        EOF
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
       with:
-        name: wc3data-wasm
+        name: wc3data-wasm-build
         path: |
-          release/*
-    
+          build/wc3data.js
+          build/wc3data.wasm
+          build/wc3data.data
+          build/wc3data-wrapper.js
+          build/README.md
+        retention-days: 30
+
     - name: Upload build logs (on failure)
       if: failure()
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: build-logs
         path: |
-          build_log.txt
           build/
-    
-    - name: Debug compilation errors
-      if: failure()
-      run: |
-        echo "=== Información de depuración ==="
-        
-        source emsdk/emsdk_env.sh
-        echo "Emscripten version:"
-        emcc --version
-        
-        echo -e "\nCompiler paths:"
-        which emcc
-        which clang
-        
-        echo -e "\nArchivos fuente encontrados:"
-        find . -name "*.cpp" -o -name "*.c" | grep -v emsdk | head -10
-        
-        echo -e "\nEstructura del directorio build:"
-        ls -la build/ || echo "Directorio build no existe"
-        
-        if [ -f "build_log.txt" ]; then
-          echo -e "\nÚltimas líneas del log de compilación:"
-          tail -50 build_log.txt
-        fi
-        
-        if [ -f "DataGen/main.cpp" ]; then
-          echo -e "\nIntentando compilación con verbose output:"
-          emcc DataGen/main.cpp -I. -IDataGen -std=c++17 -v -c 2>&1 | head -50 || true
-        fi
-        
-        echo -e "\nVerificando dependencias del sistema:"
-        which g++
-        which make
-        which cmake
-        
-        echo -e "\nInformación del sistema:"
-        uname -a
-        free -h
+          /tmp/emscripten_temp*/
+        retention-days: 7
