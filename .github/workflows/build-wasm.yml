@@ -27,39 +27,6 @@ jobs:
         emcc --version
         em++ --version
     
-    - name: Build WASM Module
-      run: |
-        mkdir -p build
-        cd build
-        
-        # Main build command for map parsing with proper API exposure
-        em++ -O3 \
-          -s WASM=1 \
-          -s EXPORTED_RUNTIME_METHODS='["cwrap","ccall","setValue","getValue","UTF8ToString","stringToUTF8"]' \
-          -s EXPORTED_FUNCTIONS='["_malloc","_free"]' \
-          -s MODULARIZE=1 \
-          -s EXPORT_NAME="WC3Module" \
-          -s ALLOW_MEMORY_GROWTH=1 \
-          -s MAXIMUM_MEMORY=512MB \
-          -s STACK_SIZE=64KB \
-          -s NO_EXIT_RUNTIME=1 \
-          -s ASSERTIONS=0 \
-          -s SAFE_HEAP=0 \
-          -s DISABLE_EXCEPTION_CATCHING=1 \
-          -s ENVIRONMENT=web \
-          -s SINGLE_FILE=0 \
-          --bind \
-          --pre-js ../wrapper/pre.js \
-          --post-js ../wrapper/post.js \
-          -I../src \
-          -I../DataGen \
-          -std=c++17 \
-          ../src/maps/*.cpp \
-          ../DataGen/src/archive.cpp \
-          ../DataGen/src/common.cpp \
-          ../DataGen/src/mpq.cpp \
-          -o wc3data.js
-    
     - name: Create JS Wrapper Files
       run: |
         mkdir -p wrapper
@@ -198,6 +165,39 @@ jobs:
           // Cleanup any remaining resources
         };
         EOF
+    
+    - name: Build WASM Module
+      run: |
+        mkdir -p build
+        cd build
+        
+        # Main build command for map parsing with proper API exposure
+        em++ -O3 \
+          -s WASM=1 \
+          -s EXPORTED_RUNTIME_METHODS='["cwrap","ccall","setValue","getValue","UTF8ToString","stringToUTF8"]' \
+          -s EXPORTED_FUNCTIONS='["_malloc","_free"]' \
+          -s MODULARIZE=1 \
+          -s EXPORT_NAME="WC3Module" \
+          -s ALLOW_MEMORY_GROWTH=1 \
+          -s MAXIMUM_MEMORY=512MB \
+          -s STACK_SIZE=64KB \
+          -s NO_EXIT_RUNTIME=1 \
+          -s ASSERTIONS=0 \
+          -s SAFE_HEAP=0 \
+          -s DISABLE_EXCEPTION_CATCHING=1 \
+          -s ENVIRONMENT=web \
+          -s SINGLE_FILE=0 \
+          --bind \
+          --pre-js ../wrapper/pre.js \
+          --post-js ../wrapper/post.js \
+          -I../src \
+          -I../DataGen \
+          -std=c++17 \
+          ../src/maps/*.cpp \
+          ../DataGen/src/archive.cpp \
+          ../DataGen/src/common.cpp \
+          ../DataGen/src/mpq.cpp \
+          -o wc3data.js
     
     - name: Create Fallback Files
       run: |
