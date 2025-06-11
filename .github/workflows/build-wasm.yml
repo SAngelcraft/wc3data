@@ -92,6 +92,16 @@ jobs:
                 mapData = std::make_unique<MapData>(file);
             }
 
+            // Método estático load para crear una instancia desde datos
+            static MapWrapper* load(const std::string& data, const std::string& filename = "map.w3x") {
+                auto* map = new MapWrapper(filename);
+                if (map->loadFromData(data)) {
+                    return map;
+                }
+                delete map;
+                return nullptr;
+            }
+
             bool loadFromData(const std::string& data) {
                 try {
                     if (!mapData) {
@@ -210,14 +220,87 @@ jobs:
                 return (data.substr(0, 2) == pk_signature) || 
                        (data.find(mpq_signature) != std::string::npos);
             }
+
+            // Método estático para crear un nuevo mapa vacío
+            static MapWrapper* createMap(const std::string& filename = "new_map.w3x") {
+                auto* map = new MapWrapper(filename);
+                // Crear datos mínimos de mapa
+                std::string emptyMapData = "PK\x03\x04"; // Firma ZIP básica
+                if (map->loadFromData(emptyMapData)) {
+                    return map;
+                }
+                delete map;
+                return nullptr;
+            }
+        };
+
+        // Clase wrapper adicional para API de alto nivel
+        class Map {
+        public:
+            // Método estático load que retorna una instancia de Map
+            static Map* load(const std::string& data, const std::string& filename = "map.w3x") {
+                auto* wrapper = MapWrapper::load(data, filename);
+                if (wrapper) {
+                    return new Map(wrapper);
+                }
+                return nullptr;
+            }
+
+            // Constructor que toma un MapWrapper
+            Map(MapWrapper* wrapper) : mapWrapper(wrapper) {}
+            
+            // Destructor
+            ~Map() {
+                if (mapWrapper) {
+                    delete mapWrapper;
+                }
+            }
+
+            // Métodos de instancia que delegan al MapWrapper
+            std::string getFile(const std::string& path) {
+                return mapWrapper ? mapWrapper->getFile(path) : "";
+            }
+
+            bool setFile(const std::string& path, const std::string& content) {
+                return mapWrapper ? mapWrapper->setFile(path, content) : false;
+            }
+
+            std::vector<std::string> listFiles() {
+                return mapWrapper ? mapWrapper->listFiles() : std::vector<std::string>();
+            }
+
+            std::string save() {
+                return mapWrapper ? mapWrapper->save() : "";
+            }
+
+            bool isLoaded() const {
+                return mapWrapper ? mapWrapper->isLoaded() : false;
+            }
+
+            std::string getFilename() const {
+                return mapWrapper ? mapWrapper->getFilename() : "";
+            }
+
+            size_t getDataSize() const {
+                return mapWrapper ? mapWrapper->getDataSize() : 0;
+            }
+
+            bool isValid() const {
+                return mapWrapper ? mapWrapper->isValid() : false;
+            }
+
+        private:
+            MapWrapper* mapWrapper;
         };
 
         EMSCRIPTEN_BINDINGS(wc3data_module) {
             register_vector<std::string>("VectorString");
             
-            class_<MapWrapper>("Map")
+            // Bindings para MapWrapper (clase de bajo nivel)
+            class_<MapWrapper>("MapWrapper")
                 .constructor<>()
                 .constructor<const std::string&>()
+                .class_function("load", &MapWrapper::load, allow_raw_pointers())
                 .function("loadFromData", &MapWrapper::loadFromData)
                 .function("getFile", &MapWrapper::getFile)
                 .function("setFile", &MapWrapper::setFile) 
@@ -228,10 +311,25 @@ jobs:
                 .function("getDataSize", &MapWrapper::getDataSize)
                 .function("isValid", &MapWrapper::isValid);
             
+            // Bindings para ArchiveWrapper (utilidades estáticas)
             class_<ArchiveWrapper>("Archive")
                 .class_function("openMap", &ArchiveWrapper::openMap, allow_raw_pointers())
-                .class_function("isValidMapData", &ArchiveWrapper::isValidMapData);
+                .class_function("isValidMapData", &ArchiveWrapper::isValidMapData)
+                .class_function("createMap", &ArchiveWrapper::createMap, allow_raw_pointers());
             
+            // Bindings para Map (API de alto nivel)
+            class_<Map>("Map")
+                .class_function("load", &Map::load, allow_raw_pointers())
+                .function("getFile", &Map::getFile)
+                .function("setFile", &Map::setFile)
+                .function("listFiles", &Map::listFiles)
+                .function("save", &Map::save)
+                .function("isLoaded", &Map::isLoaded)
+                .function("getFilename", &Map::getFilename)
+                .function("getDataSize", &Map::getDataSize)
+                .function("isValid", &Map::isValid);
+            
+            // Funciones globales para compatibilidad
             function("createMap", optional_override([]() {
                 return new MapWrapper();
             }), allow_raw_pointers());
@@ -243,6 +341,11 @@ jobs:
             function("validateMapData", optional_override([](const std::string& data) {
                 return ArchiveWrapper::isValidMapData(data);
             }));
+
+            // Función de alto nivel para cargar mapas
+            function("loadMap", optional_override([](const std::string& data, const std::string& filename) {
+                return Map::load(data, filename);
+            }), allow_raw_pointers());
         }
         EOF
 
